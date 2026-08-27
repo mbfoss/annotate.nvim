@@ -47,10 +47,11 @@ pull the feature modules in by itself.
 The one thing that cannot be lazy is a note appearing in a file the user opens
 without asking for anything. `plugin/` therefore also registers a single
 `BufReadPost` autocommand, `once = true`, which requires `annotate.notes` and
-attaches that buffer. From then on `util/extmarks` has its own `BufReadPost`
-and the bootstrap one is spent. The buffer that triggered it is attached by
-hand because `util/extmarks` installs its autocommand *during* that same event,
-and Neovim does not run autocommands added mid-event.
+loads it. From then on `util/extmarks` has its own `BufReadPost` and the
+bootstrap one is spent. The buffer that triggered it is covered by the sweep
+over already-loaded buffers that `define_group` performs, because
+`util/extmarks` installs its autocommand *during* that same event and Neovim
+does not run autocommands added mid-event.
 
 ## Notes are extmarks, but not only extmarks
 
@@ -69,18 +70,35 @@ positions have two sources:
 | file loaded in a buffer | the buffer — the extmark has been tracking edits |
 | not loaded | the group's own table |
 
-Reads (`get`, `get_at`, `get_all`) go to `nvim_buf_get_extmarks` when there is
-a buffer and refresh the table from it, so nothing else has to think about
-which of the two is current. `BufWritePost` folds the drift back in even for
-notes nobody read, which is what makes a note written to the store name the
-line the user just saved.
+The reads that take a `live` flag (`get_extmark_by_location`, `get_extmarks`,
+`get_file_extmarks`) go to `nvim_buf_get_extmarks` when there is a buffer and
+report what it says; `notes.lua` passes `live = true` everywhere, so nothing
+else has to think about which of the two is current. `BufWritePost` and
+`BufUnload` fold the drift back into the table even for notes nobody read,
+which is what makes a note written to the store name the line the user just
+saved.
 
 Placement is clamped to the buffer's line count: a file can have been shortened
 outside the editor since its notes were written, and a stale line number should
 be a note at the end rather than an error.
 
-The group is a small class rather than the `define_group`-returning-closures
-shape it grew out of, because there is one group and one consumer.
+The module is generic and self-contained, so that it can be vendored: it holds
+no plugin name of its own, and `M.init(prefix)` is what claims one. Namespaces
+and augroups are process-wide and keyed by name, while the group table is per
+module instance, so two copies of this file asking for the same group name
+would otherwise share a namespace and clear each other's autocommands. That is
+also why `M.define_group` hands back a table of closures over one group rather
+than a shared module-level API.
+
+`define_group` sweeps the buffers that are already loaded, which is what draws
+the notes in the buffer whose `BufReadPost` bootstrapped the plugin — the
+module's own `BufReadPost` is registered during that same event and so does not
+run for it. `notes.attach()` therefore only has to load.
+
+Drawing options — the virtual text, the highlight, the priority — live on the
+mark, not on the group. `notes.refresh()` consequently rebuilds the marks
+instead of calling the group's `refresh()`, which would redraw the existing
+ones under the configuration they were created with.
 
 ## Storage
 

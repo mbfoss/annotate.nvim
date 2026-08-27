@@ -22,7 +22,7 @@ local M = {}
 ---@return annotate.Config
 local function _defaults()
     return {
-        symbol        = "✎",
+        symbol        = "⚑",
         priority      = 50,
         hl            = "AnnotateNote",
         virt_text_pos = "eol",

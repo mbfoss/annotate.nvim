@@ -19,7 +19,7 @@ local ui       = require("annotate.util.ui")
 ---@field lnum integer  1-based
 ---@field text string
 
----@type annotate.Group?
+---@type annotate.fileextmarks.GroupFunctions?
 local _group
 
 local _loaded = false
@@ -45,6 +45,7 @@ local function _extmark_opts(text)
         virt_text = { { (" %s %s"):format(cfg.symbol, text), cfg.hl } },
         virt_text_pos = cfg.virt_text_pos,
         hl_mode = "combine",
+        priority = cfg.priority,
     }
 end
 
@@ -75,11 +76,14 @@ function M.load()
     })
 
     _root = config.values.root()
-    _group = extmarks.new("notes", { priority = config.values.priority })
+    -- The prefix every namespace and augroup `util/extmarks` creates is named
+    -- after; claimed once, before any group is defined.
+    extmarks.init("annotate")
+    _group = extmarks.define_group("notes")
 
     for _, note in ipairs(store.load(_root)) do
         _last_id = _last_id + 1
-        _group:set(_last_id, note.file, note.lnum, 0, _extmark_opts(note.text), { text = note.text })
+        _group.set_file_extmark(_last_id, note.file, note.lnum, 0, _extmark_opts(note.text), { text = note.text })
     end
 
     local augroup = vim.api.nvim_create_augroup("annotate.save", { clear = true })
@@ -92,12 +96,13 @@ function M.load()
     })
 end
 
---- Draw the notes for `bufnr`. Called for the buffer that was being read when
---- the plugin loaded; after that `util/extmarks` picks buffers up itself.
----@param bufnr integer
-function M.attach(bufnr)
+--- Draw the notes in the buffer that was being read when the plugin loaded.
+--- Loading is all it takes: `define_group` sweeps the buffers that are already
+--- loaded, which during `BufReadPost` includes this one, and from then on
+--- `util/extmarks` picks buffers up through its own autocommand.
+---@param _bufnr integer
+function M.attach(_bufnr)
     M.load()
-    assert(_group):attach(bufnr)
 end
 
 --- Redraw every note with the current configuration. Only needed when
@@ -106,14 +111,16 @@ end
 function M.refresh()
     if not _loaded then return end
     local group = assert(_group)
-    group.priority = config.values.priority
     _define_hl()
 
+    -- Rebuilt rather than `group.refresh()`ed: the drawing options are held on
+    -- the marks themselves, so redrawing the existing ones would redraw them
+    -- under the old configuration.
     local notes = M.list()
-    group:clear()
+    group.remove_extmarks()
     for _, note in ipairs(notes) do
         _last_id = _last_id + 1
-        group:set(_last_id, note.file, note.lnum, 0, _extmark_opts(note.text), { text = note.text })
+        group.set_file_extmark(_last_id, note.file, note.lnum, 0, _extmark_opts(note.text), { text = note.text })
     end
 end
 
@@ -137,14 +144,14 @@ function M.set(file, lnum, text)
     if text == "" then return end
     file = _norm(file)
 
-    local existing = assert(_group):get_at(file, lnum)
+    local existing = assert(_group).get_extmark_by_location(file, lnum, true)
     local id = existing and existing.id
     if not id then
         _last_id = _last_id + 1
         id = _last_id
     end
 
-    _group:set(id, file, lnum, 0, _extmark_opts(text), { text = text })
+    _group.set_file_extmark(id, file, lnum, 0, _extmark_opts(text), { text = text })
     M.save()
 end
 
@@ -154,8 +161,8 @@ end
 ---@return string?
 function M.get(file, lnum)
     M.load()
-    local info = assert(_group):get_at(_norm(file), lnum)
-    return info and info.data.text or nil
+    local info = assert(_group).get_extmark_by_location(_norm(file), lnum, true)
+    return info and info.user_data.text or nil
 end
 
 --- Remove the note on a line, if there is one.
@@ -164,9 +171,9 @@ end
 ---@return boolean removed
 function M.remove(file, lnum)
     M.load()
-    local info = assert(_group):get_at(_norm(file), lnum)
+    local info = assert(_group).get_extmark_by_location(_norm(file), lnum, true)
     if not info then return false end
-    _group:remove(info.id)
+    _group.remove_extmark(info.id)
     M.save()
     return true
 end
@@ -175,14 +182,14 @@ end
 ---@param file string
 function M.clear_file(file)
     M.load()
-    assert(_group):remove_file(_norm(file))
+    assert(_group).remove_file_extmarks(_norm(file))
     M.save()
 end
 
 --- Remove every note in the project.
 function M.clear_all()
     M.load()
-    assert(_group):clear()
+    assert(_group).remove_extmarks()
     M.save()
 end
 
@@ -191,8 +198,10 @@ end
 function M.list()
     M.load()
     local notes = {}
-    for _, info in ipairs(assert(_group):get_all()) do
-        notes[#notes + 1] = { file = info.file, lnum = info.lnum, text = info.data.text }
+    -- `live`: where a file is open, the buffer's extmarks are what have been
+    -- tracking the user's edits, so they -- not the stored line -- are current.
+    for _, info in ipairs(assert(_group).get_extmarks(true)) do
+        notes[#notes + 1] = { file = info.file, lnum = info.lnum, text = info.user_data.text }
     end
     table.sort(notes, function(a, b)
         if a.file ~= b.file then return a.file < b.file end

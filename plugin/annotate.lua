@@ -42,10 +42,10 @@ end, {
 -- Notes have to appear in a file the user opens without asking for them, which
 -- is the one thing the command cannot be lazy about. The first file read pulls
 -- the plugin in and draws its notes; from then on `annotate.util.extmarks` has
--- its own `BufReadPost` and this one is done. Its own autocommand is created
--- while this event is still being processed, and Neovim does not run
--- autocommands added mid-event, which is why the buffer that triggered this is
--- attached here by hand.
+-- its own `BufReadPost` and this one is done. That autocommand is created while
+-- this event is still being processed, and Neovim does not run autocommands
+-- added mid-event, so the buffer that triggered this is covered instead by the
+-- sweep over already-loaded buffers that defining the group performs.
 vim.api.nvim_create_autocmd("BufReadPost", {
     group = vim.api.nvim_create_augroup("annotate.bootstrap", { clear = true }),
     once = true,

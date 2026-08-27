@@ -80,7 +80,7 @@ Calling `setup()` is optional and only needed to change a default.
 
 ```lua
 require("annotate").setup({
-    symbol        = "✎",        -- drawn before the note text
+    symbol        = "⚑",        -- drawn before the note text
     priority      = 50,         -- extmark priority of the virtual text
     hl            = "AnnotateNote",
     virt_text_pos = "eol",      -- or "right_align", "inline", ...
