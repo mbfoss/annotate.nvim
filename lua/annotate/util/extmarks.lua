@@ -1,299 +1,500 @@
 local M = {}
 
---- Extmarks keyed by *file* rather than by buffer.
----
---- A note outlives the buffer it was set in: it is restored from disk before
---- anything is open, it survives the buffer being unloaded, and it has to come
---- back at the right line when the file is opened again. Neovim's extmarks are
---- per buffer and vanish with it, so a group keeps its own table of
---- `file -> id -> mark` as the durable copy, and mirrors it into whichever
---- buffers happen to be loaded.
----
---- Positions therefore have two sources. While a file is loaded the buffer is
---- authoritative -- the extmark has been tracking the user's edits -- so reads
---- go to `nvim_buf_get_extmarks` and the table is refreshed from it. While it
---- is not, the table is all there is.
-
----@class annotate.MarkInfo
----@field id   integer
----@field file string   absolute path
----@field lnum integer  1-based
----@field col  integer  0-based
----@field data any      payload carried alongside the extmark
-
----@class annotate.extmarks.Mark
----@field id   integer
----@field lnum integer
----@field col  integer
+---@class annotate.fileextmarks.MarkInfo
+---@field id number
+---@field file string
+---@field lnum number        -- 1-based
+---@field col number        -- 0-based
 ---@field opts vim.api.keyset.set_extmark
----@field data any
+---@field user_data any
+---@field source "live"|"stored"
 
----@class annotate.Group
----@field ns integer
----@field priority integer
----@field byfile table<string, table<integer, annotate.extmarks.Mark>>
----@field id_to_file table<integer, string>
-local Group = {}
-Group.__index = Group
+---@class annotate.fileextmarks.MarkData
+---@field id number
+---@field ns number
+---@field lnum number        -- 1-based
+---@field col number        -- 0-based
+---@field opts vim.api.keyset.set_extmark
+---@field user_data any
 
----@type annotate.Group[]
-local _groups = {}
-local _augroup
+---@alias annotate.fileextmarks.ById table<number, annotate.fileextmarks.MarkData>
+---@alias annotate.fileextmarks.ByFile table<string, annotate.fileextmarks.ById>
 
----@param file string
+---@class annotate.fileextmarks.GroupData
+---@field ns number
+---@field byfile annotate.fileextmarks.ByFile
+---@field id_to_file table<number, string>
+
+---@type table<string, annotate.fileextmarks.GroupData>
+local _defined_groups = {}
+local _autocmds_registered = false
+
+-- Neovim keeps extmark namespaces and autocmd groups in a single, process-wide
+-- registry keyed by name, while the state above is per module instance. If this
+-- file is vendored into several plugins, two copies asking for the same group
+-- name would silently share a namespace and clear each other's autocmds, so the
+-- owning plugin must claim a prefix via M.init() before anything else.
+---@type string?
+local _prefix = nil
+
 ---@return string
-local function _normalize(file)
-    return vim.fs.normalize(vim.fn.fnamemodify(file, ":p"))
+local function _require_prefix()
+    return assert(_prefix, "init(prefix) must be called first")
 end
 
---- The loaded buffer for `file`, or -1. An unloaded buffer is no better than
---- no buffer here: it has no lines to place an extmark against.
+---@param name string
+---@return string
+local function _prefixed(name)
+    return ("%s.%s"):format(_require_prefix(), name)
+end
+
+local function _normalize_file(file)
+    return vim.fn.fnamemodify(file, ":p")
+end
+
 ---@param file string
 ---@return integer
-local function _loaded_buf(file)
+local function _get_loaded_bufnr(file)
     local bufnr = vim.fn.bufnr(file, false)
-    if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then return bufnr end
-    return -1
+    return (bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr)) and bufnr or -1
 end
 
---- Place `mark` in `bufnr`, clamped to what the buffer actually has. A file
---- can have been shortened since the notes were written, and a stale line
---- number would otherwise be an error rather than a note at the end.
 ---@param bufnr integer
----@param ns integer
----@param mark annotate.extmarks.Mark
-local function _place(bufnr, ns, mark)
+---@param mark annotate.fileextmarks.MarkData
+local function _set_extmark(bufnr, mark)
     if not vim.api.nvim_buf_is_loaded(bufnr) then return end
+
     local line_count = vim.api.nvim_buf_line_count(bufnr)
     if line_count == 0 then return end
 
     local lnum = math.max(1, math.min(mark.lnum, line_count))
-    local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
+    local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, true)[1] or ""
     local col = math.max(0, math.min(mark.col, #line))
+
     mark.lnum, mark.col = lnum, col
 
-    pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, lnum - 1, col, mark.opts)
+    assert(type(mark.id) == "number")
+    local id = vim.api.nvim_buf_set_extmark(bufnr, mark.ns, lnum - 1, col, mark.opts)
+    assert(id == mark.id)
 end
 
---- Autocommands shared by every group, installed with the first one: buffers
---- get their marks as they are read, and give their positions back as they are
---- written. Between those two points the buffer's copy is the current one and
---- the table is behind; `BufWritePost` is where the drift is folded back in,
---- so a note saved to disk names the line the user just wrote.
-local function _ensure_autocmds()
-    if _augroup then return end
-    _augroup = vim.api.nvim_create_augroup("annotate.extmarks", { clear = true })
-
-    vim.api.nvim_create_autocmd("BufReadPost", {
-        group = _augroup,
-        callback = function(ev)
-            for _, group in ipairs(_groups) do group:attach(ev.buf) end
-        end,
-    })
-
-    vim.api.nvim_create_autocmd("BufWritePost", {
-        group = _augroup,
-        callback = function(ev)
-            for _, group in ipairs(_groups) do group:sync(ev.buf) end
-        end,
-    })
+---@param bufnr integer
+---@param ns integer
+local function _clear_buf_namespace(bufnr, ns)
+    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 end
 
---- A group of file-keyed extmarks in a namespace of its own.
----@param name string     namespace suffix, for debugging
----@param opts { priority: integer }
----@return annotate.Group
-function M.new(name, opts)
-    _ensure_autocmds()
-    local group = setmetatable({
-        ns         = vim.api.nvim_create_namespace("annotate_" .. name),
-        priority   = opts.priority,
-        byfile     = {},
-        id_to_file = {},
-    }, Group)
-    _groups[#_groups + 1] = group
-    return group
+---@param bufnr integer
+---@param group string
+local function _apply_buffer_extmarks(bufnr, group)
+    local group_data = _defined_groups[group]
+    assert(group_data)
+
+    local file = vim.api.nvim_buf_get_name(bufnr)
+    if file == "" then return end
+    file = _normalize_file(file)
+
+    local file_data = group_data.byfile[file]
+    if not file_data then return end
+
+    for _, mark in pairs(file_data) do
+        _set_extmark(bufnr, mark)
+    end
 end
 
---- Add or move a mark. Reusing an `id` moves it, including across files.
----@param id integer
----@param file string
----@param lnum integer  1-based
----@param col integer   0-based
----@param opts vim.api.keyset.set_extmark
----@param data any
-function Group:set(id, file, lnum, col, opts, data)
-    assert(lnum >= 1, "lnum must be 1-based")
-    file = _normalize(file)
+---@param bufnr number
+local function _sync_file_extmarks(bufnr)
+    local file = vim.api.nvim_buf_get_name(bufnr)
+    if file == "" then return end
+    file = _normalize_file(file)
 
-    local old_file = self.id_to_file[id]
-    if old_file then
-        local old_buf = _loaded_buf(old_file)
-        if old_buf >= 0 then
-            pcall(vim.api.nvim_buf_del_extmark, old_buf, self.ns, id)
+    for _, group_data in pairs(_defined_groups) do
+        local file_table = group_data.byfile[file]
+        if not file_table then
+            goto continue
         end
-        local old_table = self.byfile[old_file]
-        if old_table then old_table[id] = nil end
+
+        local is_set = vim.api.nvim_buf_get_extmarks(
+            bufnr,
+            group_data.ns,
+            0,
+            -1,
+            { details = false }
+        )
+
+        for _, m in ipairs(is_set) do
+            local id, row, col = m[1], m[2], m[3]
+            local mark = file_table[id]
+            if mark then
+                mark.lnum = row + 1
+                mark.col = col
+            end
+        end
+
+        ::continue::
+    end
+end
+
+local function _register_autocmds()
+    if _autocmds_registered then return end
+    _autocmds_registered = true
+
+    local augroup = vim.api.nvim_create_augroup(_prefixed("fileextmarks"), { clear = true })
+    vim.api.nvim_create_autocmd("BufReadPost", {
+        group = augroup,
+        callback = function(ev)
+            for group in pairs(_defined_groups) do
+                _apply_buffer_extmarks(ev.buf, group)
+            end
+        end,
+    })
+    vim.api.nvim_create_autocmd("BufWritePost", {
+        group = augroup,
+        callback = function(ev) _sync_file_extmarks(ev.buf) end,
+    })
+    vim.api.nvim_create_autocmd("BufUnload", {
+        group = augroup,
+        callback = function(ev) _sync_file_extmarks(ev.buf) end,
+    })
+end
+
+---@param id number
+---@param file string
+---@param lnum number        -- 1-based
+---@param col number        -- 0-based
+---@param group_data annotate.fileextmarks.GroupData
+---@param opts vim.api.keyset.set_extmark       -- extmark opts (include `priority` here)
+---@param user_data any
+---@see vim.api.nvim_buf_set_extmark
+local function _set_file_extmark(id, file, lnum, col, group_data, opts, user_data)
+    assert(lnum >= 1, "lnum must be 1-based")
+
+    file = _normalize_file(file)
+    local bufnr = _get_loaded_bufnr(file)
+
+    local old_file = group_data.id_to_file[id]
+    if old_file then
+        local old_bufnr = _get_loaded_bufnr(old_file)
+        if old_bufnr >= 0 then
+            vim.api.nvim_buf_del_extmark(old_bufnr, group_data.ns, id)
+        end
     end
 
+    group_data.id_to_file[id] = file
+    group_data.byfile[file] = group_data.byfile[file] or {}
+
+    ---@type annotate.fileextmarks.MarkData
     local mark = {
-        id   = id,
+        id = id,
+        ns = group_data.ns,
         lnum = lnum,
-        col  = col,
-        opts = vim.tbl_extend("force", { id = id, priority = self.priority }, opts or {}),
-        data = data,
+        col = col,
+        opts = vim.tbl_extend("force", { id = id }, opts or {}),
+        user_data = user_data,
     }
 
-    self.id_to_file[id] = file
-    self.byfile[file] = self.byfile[file] or {}
-    self.byfile[file][id] = mark
+    group_data.byfile[file][id] = mark
 
-    local bufnr = _loaded_buf(file)
-    if bufnr >= 0 then _place(bufnr, self.ns, mark) end
+    if bufnr >= 0 then
+        _set_extmark(bufnr, mark)
+    end
 end
 
----@param id integer
-function Group:remove(id)
-    local file = self.id_to_file[id]
+---@param id number
+---@param group_data annotate.fileextmarks.GroupData
+local function _remove_extmark(id, group_data)
+    local file = group_data.id_to_file[id]
     if not file then return end
-    self.id_to_file[id] = nil
 
-    local file_table = self.byfile[file]
-    if file_table then
-        file_table[id] = nil
-        if next(file_table) == nil then self.byfile[file] = nil end
-    end
+    group_data.id_to_file[id] = nil
 
-    local bufnr = _loaded_buf(file)
+    local file_table = group_data.byfile[file]
+    if not file_table then return end
+
+    local bufnr = _get_loaded_bufnr(file)
     if bufnr >= 0 then
-        pcall(vim.api.nvim_buf_del_extmark, bufnr, self.ns, id)
+        vim.api.nvim_buf_del_extmark(bufnr, group_data.ns, id)
     end
+
+    file_table[id] = nil
 end
 
 ---@param file string
-function Group:remove_file(file)
-    file = _normalize(file)
-    local file_table = self.byfile[file]
+---@param group_data annotate.fileextmarks.GroupData
+local function _remove_file_extmarks(file, group_data)
+    file = _normalize_file(file)
+
+    local file_table = group_data.byfile[file]
     if not file_table then return end
 
-    for id in pairs(file_table) do self.id_to_file[id] = nil end
-    self.byfile[file] = nil
+    for id in pairs(file_table) do
+        group_data.id_to_file[id] = nil
+    end
 
-    local bufnr = _loaded_buf(file)
+    group_data.byfile[file] = nil
+
+    local bufnr = _get_loaded_bufnr(file)
     if bufnr >= 0 then
-        vim.api.nvim_buf_clear_namespace(bufnr, self.ns, 0, -1)
+        _clear_buf_namespace(bufnr, group_data.ns)
     end
 end
 
-function Group:clear()
-    for file in pairs(self.byfile) do
-        local bufnr = _loaded_buf(file)
+---@param group_data annotate.fileextmarks.GroupData
+local function _remove_extmarks(group_data)
+    for file in pairs(group_data.byfile) do
+        local bufnr = _get_loaded_bufnr(file)
         if bufnr >= 0 then
-            vim.api.nvim_buf_clear_namespace(bufnr, self.ns, 0, -1)
+            _clear_buf_namespace(bufnr, group_data.ns)
         end
     end
-    self.byfile = {}
-    self.id_to_file = {}
+
+    group_data.byfile = {}
+    group_data.id_to_file = {}
 end
 
---- Draw this group's marks for `file` into `bufnr`, which is what makes a note
---- appear when its file is opened.
----@param bufnr integer
-function Group:attach(bufnr)
-    local name = vim.api.nvim_buf_get_name(bufnr)
-    if name == "" then return end
-    local file_table = self.byfile[_normalize(name)]
-    if not file_table then return end
-    for _, mark in pairs(file_table) do
-        _place(bufnr, self.ns, mark)
-    end
-end
-
---- Copy the positions the extmarks have drifted to in `bufnr` back into the
---- table.
----@param bufnr integer
-function Group:sync(bufnr)
-    local name = vim.api.nvim_buf_get_name(bufnr)
-    if name == "" then return end
-    local file_table = self.byfile[_normalize(name)]
-    if not file_table then return end
-
-    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, self.ns, 0, -1, {})) do
-        local mark = file_table[m[1]]
-        if mark then
-            mark.lnum, mark.col = m[2] + 1, m[3]
-        end
-    end
-end
-
----@param id integer
----@return annotate.MarkInfo?
-function Group:get(id)
-    local file = self.id_to_file[id]
+---@param id number
+---@param group_data annotate.fileextmarks.GroupData
+---@return annotate.fileextmarks.MarkInfo?
+local function _get_extmark_by_id(id, group_data)
+    local file = group_data.id_to_file[id]
     if not file then return nil end
-    local mark = self.byfile[file] and self.byfile[file][id]
+
+    local mark = (group_data.byfile[file] or {})[id]
     if not mark then return nil end
 
-    local bufnr = _loaded_buf(file)
-    if bufnr >= 0 then
-        local got = vim.api.nvim_buf_get_extmark_by_id(bufnr, self.ns, id, {})
-        if got and got[1] then
-            mark.lnum, mark.col = got[1] + 1, got[2]
-        end
-    end
-    return { id = id, file = file, lnum = mark.lnum, col = mark.col, data = mark.data }
+    return {
+        id = mark.id,
+        file = file,
+        lnum = mark.lnum,
+        col = mark.col,
+        opts = mark.opts,
+        user_data = mark.user_data,
+        source = "stored",
+    }
 end
 
---- The mark on `lnum` of `file`, if there is one.
 ---@param file string
----@param lnum integer  1-based
----@return annotate.MarkInfo?
-function Group:get_at(file, lnum)
-    assert(lnum >= 1, "lnum must be 1-based")
-    file = _normalize(file)
+---@param line number
+---@param group_data annotate.fileextmarks.GroupData
+---@param live boolean
+---@return annotate.fileextmarks.MarkInfo?
+local function _get_extmark_by_location(file, line, group_data, live)
+    assert(type(live) == "boolean")
+    assert(line >= 1, "line must be 1-based")
 
-    local bufnr = _loaded_buf(file)
+    file = _normalize_file(file)
+    local bufnr = live and _get_loaded_bufnr(file) or -1
     if bufnr >= 0 then
-        local found = vim.api.nvim_buf_get_extmarks(
-            bufnr, self.ns, { lnum - 1, 0 }, { lnum - 1, -1 }, {})
-        if #found == 0 then return nil end
-        return self:get(found[1][1])
+        local extmarks = vim.api.nvim_buf_get_extmarks(
+            bufnr,
+            group_data.ns,
+            { line - 1, 0 },
+            { line - 1, -1 },
+            { details = false }
+        )
+        if #extmarks == 0 then return nil end
+        return _get_extmark_by_id(extmarks[1][1], group_data)
     end
 
-    for id, mark in pairs(self.byfile[file] or {}) do
-        if mark.lnum == lnum then
-            return { id = id, file = file, lnum = mark.lnum, col = mark.col, data = mark.data }
+    local file_table = group_data.byfile[file]
+    if not file_table then return nil end
+
+    for id, mark in pairs(file_table) do
+        if mark.lnum == line then
+            return {
+                id = id,
+                file = file,
+                lnum = mark.lnum,
+                col = mark.col,
+                opts = mark.opts,
+                user_data = mark.user_data,
+                source = "stored",
+            }
         end
     end
+
     return nil
 end
 
---- Every mark in the group, with the positions loaded buffers have moved them
---- to. Unordered: callers that show them sort for themselves.
----@return annotate.MarkInfo[]
-function Group:get_all()
+---@param group_data annotate.fileextmarks.GroupData
+---@param live boolean
+---@return annotate.fileextmarks.MarkInfo[]
+local function _get_extmarks(group_data, live)
+    assert(type(live) == "boolean")
+
     local result = {}
-    for file, file_table in pairs(self.byfile) do
-        local bufnr = _loaded_buf(file)
+
+    for file, file_table in pairs(group_data.byfile) do
+        local bufnr = live and _get_loaded_bufnr(file) or -1
         if bufnr >= 0 then
-            for _, m in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, self.ns, 0, -1, {})) do
-                local mark = file_table[m[1]]
+            local items = vim.api.nvim_buf_get_extmarks(bufnr, group_data.ns, 0, -1, { details = false })
+            for _, m in ipairs(items) do
+                local id, row, col = m[1], m[2], m[3]
+                local mark = file_table[id]
                 if mark then
-                    mark.lnum, mark.col = m[2] + 1, m[3]
                     result[#result + 1] = {
-                        id = mark.id, file = file, lnum = mark.lnum, col = mark.col, data = mark.data,
+                        id = id,
+                        file = file,
+                        lnum = row + 1,
+                        col = col,
+                        opts = mark.opts,
+                        user_data = mark.user_data,
+                        source = "live",
                     }
                 end
             end
         else
-            for _, mark in pairs(file_table) do
+            for id, mark in pairs(file_table) do
                 result[#result + 1] = {
-                    id = mark.id, file = file, lnum = mark.lnum, col = mark.col, data = mark.data,
+                    id = id,
+                    file = file,
+                    lnum = mark.lnum,
+                    col = mark.col,
+                    opts = mark.opts,
+                    user_data = mark.user_data,
+                    source = "stored",
                 }
             end
         end
     end
+
     return result
+end
+
+---@param file string
+---@param group_data annotate.fileextmarks.GroupData
+---@param live boolean
+---@return annotate.fileextmarks.MarkInfo[]
+local function _get_file_extmarks(file, group_data, live)
+    assert(type(live) == "boolean")
+
+    file = _normalize_file(file)
+    local result = {}
+
+    local file_table = group_data.byfile[file]
+    if not file_table then return result end
+
+    local bufnr = live and _get_loaded_bufnr(file) or -1
+    if bufnr >= 0 then
+        local items = vim.api.nvim_buf_get_extmarks(bufnr, group_data.ns, 0, -1, { details = false })
+        for _, m in ipairs(items) do
+            local id, row, col = m[1], m[2], m[3]
+            local mark = file_table[id]
+            if mark then
+                result[#result + 1] = {
+                    id = mark.id,
+                    file = file,
+                    lnum = row + 1,
+                    col = col,
+                    opts = mark.opts,
+                    user_data = mark.user_data,
+                    source = "live",
+                }
+            end
+        end
+    else
+        for _, mark in pairs(file_table) do
+            result[#result + 1] = {
+                id = mark.id,
+                file = file,
+                lnum = mark.lnum,
+                col = mark.col,
+                opts = mark.opts,
+                user_data = mark.user_data,
+                source = "stored",
+            }
+        end
+    end
+
+    return result
+end
+
+---@param group_data annotate.fileextmarks.GroupData
+---@param group string
+local function _refresh_group(group_data, group)
+    for file in pairs(group_data.byfile) do
+        local bufnr = _get_loaded_bufnr(file)
+        if bufnr >= 0 then
+            _clear_buf_namespace(bufnr, group_data.ns)
+            _apply_buffer_extmarks(bufnr, group)
+        end
+    end
+end
+
+---@class annotate.fileextmarks.GroupFunctions
+---@field set_file_extmark fun(id:number, file:string, lnum:number, col:number, opts:vim.api.keyset.set_extmark, user_data:any)
+---@field remove_extmarks fun()
+---@field remove_extmark fun(id:number)
+---@field remove_file_extmarks fun(file:string)
+---@field get_extmark_by_id fun(id:number): annotate.fileextmarks.MarkInfo?
+---@field get_extmark_by_location fun(file:string, line:number, live:boolean): annotate.fileextmarks.MarkInfo?
+---@field get_extmarks fun(live:boolean): annotate.fileextmarks.MarkInfo[]
+---@field get_file_extmarks fun(file:string, live:boolean): annotate.fileextmarks.MarkInfo[]
+---@field refresh fun()
+
+--- Claims the prefix used for every namespace and augroup this module creates.
+--- Must be called (once) before M.define_group().
+---@param prefix string  unique to the calling plugin, e.g. "myplugin"
+function M.init(prefix)
+    assert(type(prefix) == "string" and prefix ~= "", "prefix (non-empty string) required")
+    assert(not _prefix or _prefix == prefix, ("already initialized with prefix %q"):format(_prefix))
+
+    _prefix = prefix
+end
+
+---@param group string  name, unique within this module instance; used to derive the extmark namespace
+---@return annotate.fileextmarks.GroupFunctions
+function M.define_group(group)
+    _require_prefix()
+    assert(type(group) == "string", "group (string) required")
+    assert(not _defined_groups[group], "group already defined")
+
+    ---@type annotate.fileextmarks.GroupData
+    local group_data = {
+        ns = vim.api.nvim_create_namespace(_prefixed(group)),
+        byfile = {},
+        id_to_file = {},
+    }
+    _defined_groups[group] = group_data
+
+    _register_autocmds()
+
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(bufnr) then
+            _apply_buffer_extmarks(bufnr, group)
+        end
+    end
+
+    ---@type annotate.fileextmarks.GroupFunctions
+    return {
+        set_file_extmark = function(id, file, lnum, col, opts, user_data)
+            _set_file_extmark(id, file, lnum, col, group_data, opts, user_data)
+        end,
+        remove_extmark = function(id)
+            _remove_extmark(id, group_data)
+        end,
+        remove_file_extmarks = function(file)
+            _remove_file_extmarks(file, group_data)
+        end,
+        remove_extmarks = function()
+            _remove_extmarks(group_data)
+        end,
+        get_extmark_by_id = function(id)
+            return _get_extmark_by_id(id, group_data)
+        end,
+        get_extmark_by_location = function(file, line, live)
+            return _get_extmark_by_location(file, line, group_data, live)
+        end,
+        get_extmarks = function(live)
+            return _get_extmarks(group_data, live)
+        end,
+        get_file_extmarks = function(file, live)
+            return _get_file_extmarks(file, group_data, live)
+        end,
+        refresh = function()
+            _refresh_group(group_data, group)
+        end,
+    }
 end
 
 return M

@@ -62,9 +62,9 @@ project, after a confirmation.
 
 ## Storage <!-- tag: storage -->
 
-Notes are stored per project, as one JSON file under
-`stdpath("data")/annotate/`. The project is the work tree the current directory
-is in, or the current directory itself when it is not in a repository.
+Notes are stored in one JSON file, `stdpath("data")/annotate.json`, keyed by
+project. The project is the work tree the current directory is in, or the
+current directory itself when it is not in a repository.
 
 Nothing is written into the project, so notes are never something to commit or
 to add to a `.gitignore`, and a repository checked out twice keeps a set of
@@ -86,7 +86,8 @@ require("annotate").setup({
     virt_text_pos = "eol",      -- or "right_align", "inline", ...
     auto_save     = true,       -- write the store as notes change
     root          = nil,        -- function returning the project root
-    storage_dir   = nil,        -- defaults to stdpath("data")/annotate
+    storage_file  = nil,        -- path, or a function returning one; defaults
+                                -- to stdpath("data")/annotate.json
 })
 ```
 
@@ -98,7 +99,7 @@ require("annotate").setup({
 | `virt_text_pos` | string | extmark `virt_text_pos`: `eol`, `right_align`, `inline` |
 | `auto_save` | boolean | when false, nothing is written unless you call `require("annotate.notes").save(true)` |
 | `root` | function | returns the project root the notes are stored against |
-| `storage_dir` | string | directory the store files are written to |
+| `storage_file` | string or function | JSON file the notes of every project are written to; a function is called at every read and write |
 
 ## Highlights <!-- tag: highlights -->
 

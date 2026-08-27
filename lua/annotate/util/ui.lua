@@ -1,9 +1,11 @@
 local M = {}
 
---- The small amount of UI the plugin needs, kept behind `vim.ui.*` where there
---- is a `vim.ui` for it: prompting and picking then look like everything else
---- in the user's editor, and a `dressing`/`snacks`/`fzf` style replacement is
---- picked up without this plugin knowing about it.
+--- The small amount of UI the plugin needs. Picking goes through `vim.ui.*`,
+--- so it looks like everything else in the user's editor and a
+--- `dressing`/`snacks`/`fzf` style replacement is picked up without this
+--- plugin knowing about it. Entering a note does not: it is written in a float
+--- at the cursor -- see `util/inputwin` -- because a note belongs next to the
+--- line it annotates.
 
 --- Whether `win` is an ordinary window in the layout rather than a floating
 --- overlay (a completion popup, a notification, a picker).
@@ -70,13 +72,52 @@ function M.open(file, lnum)
     end
 end
 
+--- Open a floating window on `buf` and keep an augroup alive alongside it.
+---
+--- The augroup is returned for the caller to hang the window's own autocommands
+--- on, and is deleted when the window closes -- however it closes, including
+--- ways the caller never hears about (`:quit`, a session being restored over
+--- it) -- so a float that is gone never leaves autocommands behind. `on_close`
+--- runs at the same point, for the caller to drop its handle to the window.
+---@param buf integer
+---@param enter boolean
+---@param cfg vim.api.keyset.win_config
+---@param on_close fun()?
+---@return integer win
+---@return integer augroup
+function M.create_window(buf, enter, cfg, on_close)
+    local win = vim.api.nvim_open_win(buf, enter, cfg)
+    local augroup = vim.api.nvim_create_augroup(("annotate.win.%d"):format(win), { clear = true })
+
+    vim.api.nvim_create_autocmd("WinClosed", {
+        group = augroup,
+        pattern = tostring(win),
+        once = true,
+        callback = function()
+            if on_close then on_close() end
+            -- Deleting the group the callback is running in is why this is
+            -- scheduled rather than done here.
+            vim.schedule(function() pcall(vim.api.nvim_del_augroup_by_id, augroup) end)
+        end,
+    })
+
+    return win, augroup
+end
+
 --- Ask for a line of text. `default` prefills the prompt, which is what makes
 --- setting a note over an existing one an edit rather than a retype.
+---
+--- This one is not `vim.ui.input`: a note is written where it will be read,
+--- next to the line it is attached to, and the window grows with the text
+--- instead of holding it in a one-line cmdline prompt.
 ---@param prompt string
 ---@param default string?
 ---@param on_confirm fun(text:string?)
 function M.input(prompt, default, on_confirm)
-    vim.ui.input({ prompt = prompt .. ": ", default = default or "" }, function(text)
+    require("annotate.util.inputwin").open({
+        prompt = prompt,
+        default = default,
+    }, function(text)
         if text == nil then return end -- cancelled
         on_confirm(text)
     end)

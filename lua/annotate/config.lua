@@ -16,7 +16,8 @@ local M = {}
 ---@field virt_text_pos string extmark `virt_text_pos` ("eol", "right_align", ...)
 ---@field auto_save boolean    write the store after every change
 ---@field root fun():string    project root the notes are stored against
----@field storage_dir string   directory the store files are written to
+---@field storage_file string|fun():string  JSON file the notes of every project are
+---                        written to, or a function returning it
 
 ---@return annotate.Config
 local function _defaults()
@@ -27,7 +28,7 @@ local function _defaults()
         virt_text_pos = "eol",
         auto_save     = true,
         root          = nil, ---@diagnostic disable-line: assign-type-mismatch
-        storage_dir   = vim.fs.joinpath(vim.fn.stdpath("data"), "annotate"),
+        storage_file  = vim.fs.joinpath(vim.fn.stdpath("data"), "annotate.json"),
     }
 end
 
