@@ -47,6 +47,11 @@ which sources them itself.
 note on the current line. Running it on a line that already has one offers the
 existing text for editing; submitting an empty prompt removes the note.
 
+A note is drawn as virtual text at the end of its line, as a sign in the
+gutter, or as both. `sign` sets the sign character and `""` turns it off;
+`virt_text_pos = "off"` turns the virtual text off. With both off a note is
+invisible in the buffer but still listed by `:Annotate list` and `qflist`.
+
 A note is an extmark, so it tracks its line through inserts and deletes above
 it rather than sitting at a line number that drifts out from under it. Lines
 are recorded as they stand when the file is written.
@@ -83,7 +88,8 @@ require("annotate").setup({
     symbol        = "⚑",        -- drawn before the note text
     priority      = 50,         -- extmark priority of the virtual text
     hl            = "AnnotateNote",
-    virt_text_pos = "eol",      -- or "right_align", "inline", ...
+    sign          = "",         -- one or two cells in the gutter; "" draws none
+    virt_text_pos = "eol",      -- or "right_align", or "off"
     auto_save     = true,       -- write the store as notes change
     root          = nil,        -- function returning the project root
     storage_file  = nil,        -- path, or a function returning one; defaults
@@ -95,8 +101,9 @@ require("annotate").setup({
 | --- | --- | --- |
 | `symbol` | string | prefix drawn before the note text |
 | `priority` | number | extmark priority for the virtual text |
-| `hl` | string | highlight group for the virtual text |
-| `virt_text_pos` | string | extmark `virt_text_pos`: `eol`, `right_align`, `inline` |
+| `hl` | string | highlight group for the virtual text and the sign |
+| `sign` | string | sign placed in the gutter, one or two cells wide; `""` draws none |
+| `virt_text_pos` | string | extmark `virt_text_pos`: `eol`, `right_align`, or `off` for no virtual text |
 | `auto_save` | boolean | when false, nothing is written unless you call `require("annotate.notes").save(true)` |
 | `root` | function | returns the project root the notes are stored against |
 | `storage_file` | string or function | JSON file the notes of every project are written to; a function is called at every read and write |
@@ -105,7 +112,7 @@ require("annotate").setup({
 
 | group | default | what it colours |
 | --- | --- | --- |
-| `AnnotateNote` | `Todo` | the note's virtual text |
+| `AnnotateNote` | `Todo` | the note's virtual text and its sign |
 
 Defined with `default = true`, so a colorscheme that has an opinion about it
 wins.

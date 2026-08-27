@@ -36,17 +36,31 @@ local function _notify(msg, level)
     vim.notify("[annotate] " .. msg, level or vim.log.levels.INFO)
 end
 
---- The virtual text a note is drawn as.
+--- How a note is drawn: virtual text on its line, a sign in the gutter, or
+--- both. `virt_text_pos = "off"` and `sign = ""` each turn their half off, so
+--- a sign-only note is the pair of them; a note with neither is still a note,
+--- and still in `:Annotate list`, it just leaves the line alone.
 ---@param text string
 ---@return vim.api.keyset.set_extmark
 local function _extmark_opts(text)
     local cfg = config.values
-    return {
-        virt_text = { { (" %s %s"):format(cfg.symbol, text), cfg.hl } },
-        virt_text_pos = cfg.virt_text_pos,
+    ---@type vim.api.keyset.set_extmark
+    local opts = {
         hl_mode = "combine",
         priority = cfg.priority,
     }
+
+    if cfg.virt_text_pos ~= "off" then
+        opts.virt_text = { { (" %s %s"):format(cfg.symbol, text), cfg.hl } }
+        opts.virt_text_pos = cfg.virt_text_pos
+    end
+
+    if cfg.sign ~= "" then
+        opts.sign_text = cfg.sign
+        opts.sign_hl_group = cfg.hl
+    end
+
+    return opts
 end
 
 --- A colorscheme clears highlight groups, so the group is (re)defined whenever
