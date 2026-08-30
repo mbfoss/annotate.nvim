@@ -465,16 +465,8 @@ local function _register_autocmds()
 
     local name = _prefixed("fileextmarks")
 
-    -- The namespace check in `define_group` catches most of this collision; this
-    -- catches the rest, since two copies sharing a prefix collide here even when
-    -- they define differently named groups. `nvim_get_autocmds` throwing on a group
-    -- that does not exist is the only way to ask, so a successful call is the bad
-    -- news: the group is someone else's, and `clear = true` would delete their
-    -- autocommands and leave their marks untracked.
-    assert(not pcall(vim.api.nvim_get_autocmds, { group = name }), ([[
-augroup %q already exists -- another copy of this module owns prefix %q.
-Creating it here would clear that copy's autocommands and silently stop its marks
-from tracking edits. Give this copy a prefix of its own via init().]]):format(name, _require_prefix()))
+    assert(not pcall(vim.api.nvim_get_autocmds, { group = name }),
+        ("augroup %q already exists -- another copy of this module owns prefix %q"):format(name, _require_prefix()))
 
     local augroup = vim.api.nvim_create_augroup(name, { clear = true })
     -- `BufNewFile` alongside `BufReadPost`: a path with no file behind it fires
@@ -853,7 +845,7 @@ function M.define_group(group)
 
     local ns_name = _prefixed(group)
     assert(not vim.api.nvim_get_namespaces()[ns_name],
-    ("namespace %q already exists -- another copy of this module owns prefix %q"):format(ns_name, _require_prefix()))
+        ("namespace %q already exists -- another copy of this module owns prefix %q"):format(ns_name, _require_prefix()))
 
     ---@type annotate.util.fileextmarks.GroupData
     local group_data = {
