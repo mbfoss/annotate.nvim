@@ -56,6 +56,12 @@ A note is an extmark, so it tracks its line through inserts and deletes above
 it rather than sitting at a line number that drifts out from under it. Lines
 are recorded as they stand when the file is written.
 
+Deleting an annotated line does not throw the note away. It collapses onto the
+line that takes the deleted one's place, or onto the last line of the file when
+the delete ran to the end, so the note is still visible and still reachable
+from `:Annotate list` -- to be moved back where you want it, or removed with
+`:Annotate delete`.
+
 `:Annotate list` opens `vim.ui.select` over every note in the project — the
 picker you already use, if you have one installed — and jumps to the one you
 choose. `:Annotate qflist` puts the same list in the quickfix window, which is
