@@ -138,15 +138,38 @@ function M.refresh()
     end
 end
 
+--- Every note, ordered by file and then by line.
+---@param live boolean  read open buffers, rather than the stored line
+---@return annotate.Note[]
+local function _collect(live)
+    local notes = {}
+    for _, info in ipairs(assert(_group).get_extmarks(live)) do
+        notes[#notes + 1] = { file = info.file, lnum = info.lnum, text = info.user_data.text }
+    end
+    table.sort(notes, function(a, b)
+        if a.file ~= b.file then return a.file < b.file end
+        return a.lnum < b.lnum
+    end)
+    return notes
+end
+
 -------- PUBLIC API --------
 
 --- Write the notes out. A no-op with `auto_save = false`, which leaves saving
 --- entirely to the caller.
+---
+--- Stored lines, not live ones: the store describes the file on disk, and a
+--- modified buffer's extmarks describe an edit that may never be written. A
+--- note in a buffer whose lines above it have been deleted but not saved sits
+--- live at the shorter buffer's line, and writing that out would move it for
+--- good the moment the edit is thrown away. Where the buffer *has* been
+--- written, `util/fileextmarks` syncs the stored line from it on
+--- `BufWritePost` before this runs, so the two agree.
 ---@param force boolean?  save even with `auto_save = false`
 function M.save(force)
     if not _loaded then return end
     if not (force or config.values.auto_save) then return end
-    store.save(assert(_root), M.list())
+    store.save(assert(_root), _collect(false))
 end
 
 --- Set the note on a line, replacing any note already there.
@@ -211,17 +234,10 @@ end
 ---@return annotate.Note[]
 function M.list()
     M.load()
-    local notes = {}
     -- `live`: where a file is open, the buffer's extmarks are what have been
-    -- tracking the user's edits, so they -- not the stored line -- are current.
-    for _, info in ipairs(assert(_group).get_extmarks(true)) do
-        notes[#notes + 1] = { file = info.file, lnum = info.lnum, text = info.user_data.text }
-    end
-    table.sort(notes, function(a, b)
-        if a.file ~= b.file then return a.file < b.file end
-        return a.lnum < b.lnum
-    end)
-    return notes
+    -- tracking the user's edits, so they -- not the stored line -- are where
+    -- the note is *now*, which is what a jump or a listing wants.
+    return _collect(true)
 end
 
 -------- COMMANDS --------
