@@ -392,10 +392,14 @@ end
 --- describes what is on disk, so this gates every write from a buffer back into
 --- the cache: an unsaved edit, and a buffer with no file behind it, are not it.
 ---@param bufnr integer
----@param file string        -- normalized
 ---@return boolean
-local function _buf_matches_file(bufnr, file)
-    return not vim.bo[bufnr].modified and vim.fn.filereadable(file) == 1
+local function _buf_matches_file(bufnr)
+    if vim.bo[bufnr].modified then return false end
+
+    -- The second call is reached only by a one-line buffer, so the common case is
+    -- a single C call and no allocation.
+    if vim.api.nvim_buf_line_count(bufnr) > 1 then return true end
+    return vim.api.nvim_buf_get_lines(bufnr, 0, 1, true)[1] ~= ""
 end
 
 --- Replaces the namespace with this group's stored marks for `bufnr`'s file. The
@@ -419,7 +423,7 @@ local function _apply_buffer_extmarks(bufnr, group)
     -- The clamp is evidence about the file only when the buffer holds what the
     -- file holds: a `BufNewFile` buffer is empty for want of a file, not for want
     -- of lines, and recording that would flatten every stored line to 1.
-    local store = _buf_matches_file(bufnr, file)
+    local store = _buf_matches_file(bufnr)
 
     for _, mark in pairs(file_data) do
         _set_extmark(bufnr, mark, store)
@@ -436,7 +440,7 @@ local function _sync_file_extmarks(bufnr)
 
     -- Both callers reach here with the buffer about to be written or dropped, and
     -- neither is a reason to record positions the file does not have.
-    if not _buf_matches_file(bufnr, file) then return end
+    if not _buf_matches_file(bufnr) then return end
 
     for _, group_data in pairs(_defined_groups) do
         local file_table = group_data.byfile[file]
@@ -459,7 +463,20 @@ local function _register_autocmds()
     if _autocmds_registered then return end
     _autocmds_registered = true
 
-    local augroup = vim.api.nvim_create_augroup(_prefixed("fileextmarks"), { clear = true })
+    local name = _prefixed("fileextmarks")
+
+    -- The namespace check in `define_group` catches most of this collision; this
+    -- catches the rest, since two copies sharing a prefix collide here even when
+    -- they define differently named groups. `nvim_get_autocmds` throwing on a group
+    -- that does not exist is the only way to ask, so a successful call is the bad
+    -- news: the group is someone else's, and `clear = true` would delete their
+    -- autocommands and leave their marks untracked.
+    assert(not pcall(vim.api.nvim_get_autocmds, { group = name }), ([[
+augroup %q already exists -- another copy of this module owns prefix %q.
+Creating it here would clear that copy's autocommands and silently stop its marks
+from tracking edits. Give this copy a prefix of its own via init().]]):format(name, _require_prefix()))
+
+    local augroup = vim.api.nvim_create_augroup(name, { clear = true })
     -- `BufNewFile` alongside `BufReadPost`: a path with no file behind it fires
     -- only the former, and marks on a file that is not there yet are a case this
     -- module supports -- see `_normalize_file`.
@@ -557,7 +574,7 @@ local function _set_file_extmark(id, file, lnum, col, group_data, opts, user_dat
         -- mark to the short buffer's last line for good -- the edit can be thrown
         -- away, the cached line cannot. Where the buffer is the file, the clamp is
         -- evidence and worth keeping; where it is not, the caller's line stands.
-        _set_extmark(bufnr, mark, _buf_matches_file(bufnr, file))
+        _set_extmark(bufnr, mark, _buf_matches_file(bufnr))
         _attach_buffer(bufnr, file)
     end
 end
@@ -834,9 +851,13 @@ function M.define_group(group)
     assert(type(group) == "string", "group (string) required")
     assert(not _defined_groups[group], "group already defined")
 
+    local ns_name = _prefixed(group)
+    assert(not vim.api.nvim_get_namespaces()[ns_name],
+    ("namespace %q already exists -- another copy of this module owns prefix %q"):format(ns_name, _require_prefix()))
+
     ---@type annotate.util.fileextmarks.GroupData
     local group_data = {
-        ns = vim.api.nvim_create_namespace(_prefixed(group)),
+        ns = vim.api.nvim_create_namespace(ns_name),
         byfile = {},
         id_to_file = {},
     }
