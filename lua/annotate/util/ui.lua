@@ -1,136 +1,298 @@
 local M = {}
 
---- The small amount of UI the plugin needs. Picking goes through `vim.ui.*`,
---- so it looks like everything else in the user's editor and a
---- `dressing`/`snacks`/`fzf` style replacement is picked up without this
---- plugin knowing about it. Entering a note does not: it is written in a float
---- at the cursor -- see `util/inputwin` -- because a note belongs next to the
---- line it annotates.
-
---- Whether `win` is an ordinary window in the layout rather than a floating
---- overlay (a completion popup, a notification, a picker).
----@param win integer
----@return boolean
-local function _is_layout_win(win)
-    return vim.api.nvim_win_get_config(win).relative == ""
+local function _is_regular_win(winid)
+    if not vim.api.nvim_win_is_valid(winid) then return false end
+    local cfg = vim.api.nvim_win_get_config(winid)
+    if cfg.relative ~= "" then return false end      -- skip popups
+    if vim.wo[winid].winfixbuf then return false end -- skip fixed windows
+    return true
 end
 
---- Whether `bufnr` is a buffer holding a file the user is editing -- the only
---- kind of buffer a note can be attached to. A note is stored against a path,
---- so a scratch buffer, a terminal or a help page has nothing to attach to.
----@param bufnr integer
----@return boolean
-function M.is_file_buf(bufnr)
-    if not vim.api.nvim_buf_is_valid(bufnr) then return false end
-    if vim.bo[bufnr].buftype ~= "" then return false end
-    return vim.api.nvim_buf_get_name(bufnr) ~= ""
+--- The buffer, if any, named exactly `path`. `vim.fn.bufnr()` looks like the tool
+--- for this but matches its argument as a pattern and, when nothing matches
+--- exactly, settles for a partial match -- so it answers with buffers that merely
+--- spell like the path, and chokes on a name holding a regex metacharacter.
+---
+--- `path` is expanded first, since that is what `nvim_buf_set_name` does with a
+--- relative or bare name and so what the buffer is named by the time we look.
+---@param path string
+---@return integer           -- -1 when no buffer has that name
+local function _bufnr_by_name(path)
+    path = vim.fn.fnamemodify(path, ":p")
+
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_get_name(bufnr) == path then return bufnr end
+    end
+
+    return -1
 end
 
---- The file and line under the cursor, as an absolute path and a 1-based line
---- number, or nil when the current buffer is not a file.
----@return string? file
----@return integer? lnum
-function M.cursor_location()
-    local bufnr = vim.api.nvim_get_current_buf()
-    if not M.is_file_buf(bufnr) then return nil, nil end
-    local file = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
-    return file, vim.api.nvim_win_get_cursor(0)[1]
+---@param winid integer
+---@param line? integer 1-based line number (nil = just open)
+---@param col?  integer 0-based column (nil = column 0)
+local function _safe_set_cursor_pos(winid, line, col)
+    if not (line and type(line) == 'number' and line > 0) then return end
+    if not vim.api.nvim_win_is_valid(winid) then return end
+    local bufnr = vim.api.nvim_win_get_buf(winid)
+    if not vim.api.nvim_buf_is_valid(bufnr) then return end
+    local maxline = vim.api.nvim_buf_line_count(bufnr)
+    line = math.min(line, maxline)
+    local line_length = #vim.api.nvim_buf_get_lines(bufnr, line - 1, line, true)[1]
+    if col and type(col) == 'number' and col >= 0 then
+        col = math.min(col, line_length)
+    else
+        col = 0
+    end
+    vim.api.nvim_win_set_cursor(winid, { line, col })
 end
 
---- Show `file` at `lnum`. A window in the current tab already showing the file
---- is reused and jumped to; otherwise the file is edited in the current
---- window, or -- when the cursor is in a float -- in the first ordinary window
---- of the tab.
----@param file string
----@param lnum integer?
-function M.open(file, lnum)
-    local target = vim.fs.normalize(vim.fn.fnamemodify(file, ":p"))
+---@return number winid
+local function _get_regular_window()
+    local cur_win = vim.api.nvim_get_current_win()
+    if _is_regular_win(cur_win) then
+        return cur_win
+    end
 
-    local win
-    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-        if _is_layout_win(w) then
-            win = win or w
-            local name = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w))
-            if name ~= "" and vim.fs.normalize(name) == target then
-                win = w
-                break
-            end
+    local tabpage = vim.api.nvim_get_current_tabpage()
+    for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
+        if winid ~= cur_win and _is_regular_win(winid) then
+            return winid
         end
     end
-    if not win then return end
 
-    vim.api.nvim_set_current_win(win)
-    if vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win)) ~= target then
-        vim.cmd.edit(vim.fn.fnameescape(target))
-    end
-
-    if lnum then
-        local last = vim.api.nvim_buf_line_count(0)
-        vim.api.nvim_win_set_cursor(win, { math.max(1, math.min(lnum, last)), 0 })
-        vim.cmd("normal! zv")
-        vim.cmd("normal! zz")
-    end
+    vim.cmd('vsplit')
+    local newwin = vim.api.nvim_get_current_win()
+    -- A split inherits window-local options from its parent, so splitting off a
+    -- winfixbuf panel yields a winfixbuf window too; clear it so a file can load.
+    vim.wo[newwin].winfixbuf = false
+    return newwin
 end
 
---- Open a floating window on `buf` and keep an augroup alive alongside it.
----
---- The augroup is returned for the caller to hang the window's own autocommands
---- on, and is deleted when the window closes -- however it closes, including
---- ways the caller never hears about (`:quit`, a session being restored over
---- it) -- so a float that is gone never leaves autocommands behind. `on_close`
---- runs at the same point, for the caller to drop its handle to the window.
----@param buf integer
----@param enter boolean
----@param cfg vim.api.keyset.win_config
----@param on_close fun()?
----@return integer win
----@return integer augroup
-function M.create_window(buf, enter, cfg, on_close)
-    local win = vim.api.nvim_open_win(buf, enter, cfg)
-    local augroup = vim.api.nvim_create_augroup(("annotate.win.%d"):format(win), { clear = true })
 
+--- @param buffer integer Buffer to display, or 0 for current buffer
+--- @param enter boolean Enter the window (make it the current window)
+--- @param config vim.api.keyset.win_config Map defining the window configuration
+--- @param on_close function
+--- @return integer winid, integer augroup
+function M.create_window(buffer, enter, config, on_close)
+    local win = vim.api.nvim_open_win(buffer, enter, config)
+    local augroup = vim.api.nvim_create_augroup("neotoolkit_window_#" .. win, { clear = true })
     vim.api.nvim_create_autocmd("WinClosed", {
         group = augroup,
-        pattern = tostring(win),
-        once = true,
-        callback = function()
-            if on_close then on_close() end
-            -- Deleting the group the callback is running in is why this is
-            -- scheduled rather than done here.
-            vim.schedule(function() pcall(vim.api.nvim_del_augroup_by_id, augroup) end)
-        end,
+        callback = function(args)
+            local closedwin = tonumber(args.match)
+            if closedwin == win then
+                vim.api.nvim_del_augroup_by_id(augroup)
+                on_close()
+            end
+        end
     })
-
     return win, augroup
 end
 
---- Ask for a line of text. `default` prefills the prompt, which is what makes
---- setting a note over an existing one an edit rather than a retype.
----
---- This one is not `vim.ui.input`: a note is written where it will be read,
---- next to the line it is attached to, and the window grows with the text
---- instead of holding it in a one-line cmdline prompt.
----@param prompt string
----@param default string?
----@param on_confirm fun(text:string?)
-function M.input(prompt, default, on_confirm)
-    require("annotate.util.inputwin").open({
-        prompt = prompt,
-        default = default,
-    }, function(text)
-        if text == nil then return end -- cancelled
-        on_confirm(text)
+---@param listed boolean
+---@param buffer_options vim.bo?
+---@param on_delete function?
+function M.create_scratch_buffer(listed, buffer_options, on_delete)
+    local buf = vim.api.nvim_create_buf(listed, true)
+    local bo = { ---@type vim.bo
+        buftype = "nofile",
+        swapfile = false,
+        modeline = false,
+    }
+    if not listed then
+        bo.bufhidden = 'wipe'
+    end
+    if buffer_options then
+        for k, v in pairs(buffer_options) do
+            bo[k] = v
+        end
+    end
+    for k, v in pairs(bo) do
+        vim.bo[buf][k] = v
+    end
+    if on_delete then
+        vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+            buffer = buf,
+            once = true,
+            callback = function(ev)
+                on_delete()
+            end,
+        })
+    end
+    return buf
+end
+
+---@param filepath string
+---@param line? integer 1-based line number (nil = just open)
+---@param col?  integer 0-based column (nil = column 0)
+---@param activate boolean? activates the file window
+---@return number winid or -1
+---@return number bufnr or -1
+function M.smart_open_file(filepath, line, col, activate)
+    if line and line < 1 then line = nil end
+    if col and col < 0 then col = nil end
+    if not filepath or filepath == "" then return -1, -1 end
+    local full_path = vim.fn.fnamemodify(filepath, ':p')
+
+    -- Don't conjure an empty buffer for a path with neither a live buffer nor a
+    -- file on disk. (bufadd() would happily create a phantom entry for a
+    -- nonexistent file, so we still need this exact-match precheck.) The buffer
+    -- list scan only runs for paths missing from disk, which is the rare case.
+    if vim.fn.filereadable(full_path) == 0 and _bufnr_by_name(full_path) == -1 then
+        return -1, -1
+    end
+
+    -- Reuse a window already showing this file.
+    local tabpage = vim.api.nvim_get_current_tabpage()
+    for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
+        if _is_regular_win(winid) then
+            local bufnr = vim.api.nvim_win_get_buf(winid)
+            if vim.api.nvim_buf_get_name(bufnr) == full_path then
+                if activate ~= false then
+                    vim.api.nvim_set_current_win(winid)
+                end
+                _safe_set_cursor_pos(winid, line, col)
+                return winid, bufnr
+            end
+        end
+    end
+
+    local winid = _get_regular_window()
+    if activate ~= false then
+        vim.api.nvim_set_current_win(winid)
+    end
+
+    -- Exact-path lookup/create, no glob or fuzzy fallback. bufadd() only makes
+    -- the (unloaded) entry; `:buffer` below does the reading.
+    local bufnr = vim.fn.bufadd(full_path)
+
+    -- `:buffer <nr>` rather than nvim_win_set_buf(): it takes the buffer by
+    -- number (no name matching), but unlike the API call it sets the alternate
+    -- file and the jump mark, so <C-^> and <C-o> still work after a jump. Run it
+    -- in the resolved regular window, not the current one, which may be a
+    -- winfixbuf panel when activate == false.
+    --
+    -- pcall is required here: the load can abort for reasons the caller cannot
+    -- check for up front -- an existing swap file the user answers "quit" to, an
+    -- unreadable file, E37 on a modified buffer under 'nohidden' -- and an
+    -- uncaught Vim error unwinds into the picker callback as a stack traceback.
+    local ok, err = pcall(vim.fn.win_execute, winid, "buffer " .. bufnr)
+    if not ok or not vim.api.nvim_win_is_valid(winid)
+        or vim.api.nvim_win_get_buf(winid) ~= bufnr then
+        -- Aborted: leave the window on whatever it was showing, and leave the
+        -- buffer unlisted so a failed open does not litter `:ls`.
+        if not ok and err and err ~= "" then
+            vim.notify("neotoolkit: " .. tostring(err), vim.log.levels.WARN)
+        end
+        return -1, -1
+    end
+    vim.bo[bufnr].buflisted = true
+
+    _safe_set_cursor_pos(winid, line, col)
+    return winid, bufnr
+end
+
+---@param bufnr integer
+---@param line? integer 1-based line number (nil = just open)
+---@param col?  integer 0-based column (nil = column 0)
+---@return number winid
+function M.smart_open_buffer(bufnr, line, col)
+    local winid = _get_regular_window()
+    vim.api.nvim_set_current_win(winid)
+    vim.fn.win_execute(winid, "buffer " .. bufnr)
+    _safe_set_cursor_pos(winid, line, col)
+    return winid
+end
+
+---@param msg string
+---@param default_yes boolean
+---@param callback fun(confirmed: boolean|nil)
+function M.confirm_action(msg, default_yes, callback)
+    local choices = "&Yes\n&No"
+    local default = default_yes and 1 or 2
+
+    local ok, choice = pcall(vim.fn.confirm, msg, choices, default)
+    if not ok then
+        callback(nil)
+        return
+    end
+    if choice == 1 then
+        callback(true)
+    elseif choice == 2 then
+        callback(false)
+    else
+        callback(nil)
+    end
+end
+
+---Pull content down into any blank space at the bottom of a window so the viewport
+---stays full instead of showing a few lines over a field of `~`. Scrolls the view
+---only (never the cursor), and only when there are earlier lines to pull down.
+---@param winid integer
+function M.fill_viewport(winid)
+    if not vim.api.nvim_win_is_valid(winid) then return end
+    local h    = vim.api.nvim_win_get_height(winid)
+    local info = vim.fn.getwininfo(winid)[1]
+    if not info then return end
+
+    local visible = info.botline - info.topline + 1
+    if visible >= h or info.topline <= 1 then return end
+
+    vim.api.nvim_win_call(winid, function()
+        local view   = vim.fn.winsaveview()
+        view.topline = math.max(1, view.topline - (h - visible))
+        vim.fn.winrestview(view)
     end)
 end
 
---- Ask a yes/no question, defaulting to no: everything asked here destroys
---- notes, so the answer that costs nothing is the one <CR> gives.
----@param msg string
----@param on_confirm fun(confirmed:boolean)
-function M.confirm(msg, on_confirm)
-    vim.ui.select({ "no", "yes" }, { prompt = msg .. "?" }, function(choice)
-        on_confirm(choice == "yes")
-    end)
+---Convert a color to a 24-bit integer.
+---@param color integer|string
+---@return integer
+function M.normalize_color(color)
+    if type(color) == "number" then
+        return color
+    end
+    if type(color) == "string" then
+        color = color:gsub("^#", "")
+        local n = tonumber(color, 16)
+        if n then
+            return n
+        end
+    end
+    error("invalid color: " .. tostring(color))
+end
+
+---Linearly blend two 24-bit integer colors.
+---@param c1 integer|string  -- base color
+---@param c2 integer|string  -- blend-toward color
+---@param alpha number  -- 0 = all c1, 1 = all c2
+---@return integer
+function M.blend_colors(c1, c2, alpha)
+    c1, c2 = M.normalize_color(c1), M.normalize_color(c2)
+    local r1 = bit.rshift(c1, 16)
+    local g1 = bit.band(bit.rshift(c1, 8), 0xFF)
+    local b1 = bit.band(c1, 0xFF)
+    local r2 = bit.rshift(c2, 16)
+    local g2 = bit.band(bit.rshift(c2, 8), 0xFF)
+    local b2 = bit.band(c2, 0xFF)
+    local r = math.floor(r1 * (1 - alpha) + r2 * alpha)
+    local g = math.floor(g1 * (1 - alpha) + g2 * alpha)
+    local b = math.floor(b1 * (1 - alpha) + b2 * alpha)
+    return bit.bor(bit.lshift(r, 16), bit.lshift(g, 8), b)
+end
+
+---Return `basename` if no buffer has that name, otherwise `basename~1`, `basename~2`, …
+---@param basename string
+---@return string
+function M.unique_buf_name(basename)
+    local name = basename
+    local n    = 0
+    while _bufnr_by_name(name) ~= -1 do
+        n    = n + 1
+        name = basename .. "~" .. n
+    end
+    return name
 end
 
 return M

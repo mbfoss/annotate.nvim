@@ -35,11 +35,11 @@ function M.setup(opts)
     end
 end
 
---- `:Annotate`'s implementation, as an `annotate.usercmd.run_fn`. Exposed so
---- that `plugin/annotate.lua` can register the command without this module
+--- `:Annotate`'s implementation, as an `annotate.util.usercmd.run_fn`. Exposed
+--- so that `plugin/annotate.lua` can register the command without this module
 --- being loaded: it hands `util/usercmd` a wrapper that requires us on the
 --- first invocation.
----@type annotate.usercmd.run_fn
+---@type annotate.util.usercmd.run_fn
 function M.run(_, args)
     local sub = args[1]
     local notes = _notes()
@@ -61,9 +61,9 @@ function M.run(_, args)
     end
 end
 
---- `:Annotate`'s completion, as an `annotate.usercmd.subcommand_fn`. Exposed
+--- `:Annotate`'s completion, as an `annotate.util.usercmd.subcommand`. Exposed
 --- for the same reason as `M.run`.
----@type annotate.usercmd.subcommand_fn
+---@type annotate.util.usercmd.subcommand
 function M.complete(_, rest, _)
     if #rest == 0 then
         return vim.deepcopy(_SUBCOMMANDS)

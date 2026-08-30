@@ -1,25 +1,25 @@
 local M = {}
 
-local config   = require("annotate.config")
-local extmarks = require("annotate.util.extmarks")
-local store    = require("annotate.store")
-local ui       = require("annotate.util.ui")
+local config       = require("annotate.config")
+local fileextmarks = require("annotate.util.fileextmarks")
+local store        = require("annotate.store")
+local ui           = require("annotate.ui")
 
 --- Line notes: a piece of text attached to a line of a file, drawn as virtual
 --- text at the end of it and remembered between sessions.
 ---
 --- A note is an extmark, which is what makes it follow the line as the file is
 --- edited rather than sitting at a line number that drifts out from under it.
---- `util/extmarks` keeps the copy that outlives the buffer; this module owns
---- what a note *is* -- its text, how it is drawn, when it is written out -- and
---- the commands over it.
+--- `util/fileextmarks` keeps the copy that outlives the buffer; this module
+--- owns what a note *is* -- its text, how it is drawn, when it is written out
+--- -- and the commands over it.
 
 ---@class annotate.Note
 ---@field file string   absolute path
 ---@field lnum integer  1-based
 ---@field text string
 
----@type annotate.fileextmarks.GroupFunctions?
+---@type annotate.util.fileextmarks.GroupFunctions?
 local _group
 
 local _loaded = false
@@ -90,10 +90,10 @@ function M.load()
     })
 
     _root = config.values.root()
-    -- The prefix every namespace and augroup `util/extmarks` creates is named
-    -- after; claimed once, before any group is defined.
-    extmarks.init("annotate")
-    _group = extmarks.define_group("notes")
+    -- The prefix every namespace and augroup `util/fileextmarks` creates is
+    -- named after; claimed once, before any group is defined.
+    fileextmarks.init("annotate")
+    _group = fileextmarks.define_group("notes")
 
     for _, note in ipairs(store.load(_root)) do
         _last_id = _last_id + 1
@@ -113,7 +113,7 @@ end
 --- Draw the notes in the buffer that was being read when the plugin loaded.
 --- Loading is all it takes: `define_group` sweeps the buffers that are already
 --- loaded, which during `BufReadPost` includes this one, and from then on
---- `util/extmarks` picks buffers up through its own autocommand.
+--- `util/fileextmarks` picks buffers up through its own autocommand.
 ---@param _bufnr integer
 function M.attach(_bufnr)
     M.load()
