@@ -39,7 +39,6 @@ end
 --- so that `plugin/annotate.lua` can register the command without this module
 --- being loaded: it hands `util/usercmd` a wrapper that requires us on the
 --- first invocation.
----@type annotate.util.usercmd.run_fn
 function M.run(_, args)
     local sub = args[1]
     local notes = _notes()
@@ -63,7 +62,6 @@ end
 
 --- `:Annotate`'s completion, as an `annotate.util.usercmd.subcommand`. Exposed
 --- for the same reason as `M.run`.
----@type annotate.util.usercmd.subcommand
 function M.complete(_, rest, _)
     if #rest == 0 then
         return vim.deepcopy(_SUBCOMMANDS)

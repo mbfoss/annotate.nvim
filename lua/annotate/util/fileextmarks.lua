@@ -490,9 +490,13 @@ local function _register_autocmds()
         group = augroup,
         callback = function(ev) _sync_file_extmarks(ev.buf) end,
     })
-    -- `BufWipeout`, not `BufUnload`: the number is freed here, and an unloaded
-    -- buffer keeps its name and may well be loaded again.
-    vim.api.nvim_create_autocmd("BufWipeout", {
+    -- `BufUnload` as well as `BufWipeout`: `:bdelete` unloads without wiping and
+    -- leaves the buffer valid, so waiting for the wipe leaks an entry per buffer
+    -- for the life of the session -- and `_lookup_loaded_bufnr` caches every
+    -- loaded buffer it walks past, tracked or not. An entry for an unloaded
+    -- buffer is dead weight anyway: only loaded buffers are ever scanned, and a
+    -- buffer that comes back pays one `resolve()` to re-enter the cache.
+    vim.api.nvim_create_autocmd({ "BufUnload", "BufWipeout" }, {
         group = augroup,
         callback = function(ev) _bufname_cache[ev.buf] = nil end,
     })
@@ -547,9 +551,13 @@ local function _set_file_extmark(id, file, lnum, col, group_data, opts, user_dat
     group_data.byfile[file][id] = mark
 
     if bufnr >= 0 then
-        -- Stored: the caller is placing the mark now, so where it actually landed
-        -- is the truth about it, short buffer or not.
-        _set_extmark(bufnr, mark, true)
+        -- Gated like every other write into the cached position: the clamp inside
+        -- `_set_extmark` is measured against the *buffer*, and a buffer with
+        -- unsaved deletes is shorter than its file. Storing that would pin the
+        -- mark to the short buffer's last line for good -- the edit can be thrown
+        -- away, the cached line cannot. Where the buffer is the file, the clamp is
+        -- evidence and worth keeping; where it is not, the caller's line stands.
+        _set_extmark(bufnr, mark, _buf_matches_file(bufnr, file))
         _attach_buffer(bufnr, file)
     end
 end

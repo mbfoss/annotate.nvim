@@ -52,7 +52,7 @@ local function _extmark_opts(text)
 
     if cfg.virt_text_pos ~= "off" then
         opts.virt_text = { { (" %s %s"):format(cfg.symbol, text), cfg.hl } }
-        opts.virt_text_pos = cfg.virt_text_pos
+        opts.virt_text_pos = cfg.virt_text_pos --[[@as "eol"|"right_align"]]
     end
 
     if cfg.sign ~= "" then
@@ -181,7 +181,8 @@ function M.set(file, lnum, text)
     if text == "" then return end
     file = _norm(file)
 
-    local existing = assert(_group).get_extmark_by_location(file, lnum, true)
+    assert(_group)
+    local existing = _group.get_extmark_by_location(file, lnum, true)
     local id = existing and existing.id
     if not id then
         _last_id = _last_id + 1
@@ -208,7 +209,8 @@ end
 ---@return boolean removed
 function M.remove(file, lnum)
     M.load()
-    local info = assert(_group).get_extmark_by_location(_norm(file), lnum, true)
+    assert(_group)
+    local info = _group.get_extmark_by_location(_norm(file), lnum, true)
     if not info then return false end
     _group.remove_extmark(info.id)
     M.save()
