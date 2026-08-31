@@ -1,3 +1,4 @@
+annotate	annotate.txt	/*annotate*
 annotate-api	annotate.txt	/*annotate-api*
 annotate-configuration	annotate.txt	/*annotate-configuration*
 annotate-highlights	annotate.txt	/*annotate-highlights*
@@ -7,4 +8,3 @@ annotate-notes	annotate.txt	/*annotate-notes*
 annotate-requirements	annotate.txt	/*annotate-requirements*
 annotate-storage	annotate.txt	/*annotate-storage*
 annotate-table-of-contents	annotate.txt	/*annotate-table-of-contents*
-annotate.txt	annotate.txt	/*annotate.txt*
