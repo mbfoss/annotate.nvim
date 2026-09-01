@@ -45,8 +45,8 @@ is offered for editing; submitting an empty prompt removes the note.
 
 A note can be displayed as virtual text at the end of its line, as a sign in
 the gutter, or both. `sign` sets the sign character, and `""` disables it;
-`virt_text_pos = "off"` disables the virtual text. With both disabled, a note
-is invisible in the buffer but still appears in `:Annotate list` and
+`virt_text_pos = "off"` or `""` disables the virtual text. With both disabled,
+a note is invisible in the buffer but still appears in `:Annotate list` and
 `:Annotate qflist`.
 
 Notes are extmarks, so they track their line through inserts and deletes above
@@ -111,10 +111,8 @@ written, and on exit. A store left with no notes is removed.
 require("annotate").setup({
     symbol        = "⚑",        -- drawn before the note text
     priority      = 50,         -- extmark priority of the virtual text
-    hl            = "AnnotateNote",
     sign          = "",         -- one or two cells in the gutter; "" draws none
-    virt_text_pos = "eol",      -- or "right_align", or "off"
-    auto_save     = true,       -- write the store as notes change
+    virt_text_pos = "eol",      -- or "right_align", or "off" ("") for none
     storage_file  = nil,        -- path, or a function returning one; defaults
                                 -- to stdpath("data")/annotate.json
 })
@@ -124,20 +122,16 @@ require("annotate").setup({
 | --- | --- | --- |
 | `symbol` | string | prefix drawn before the note text |
 | `priority` | number | extmark priority for the virtual text |
-| `hl` | string | highlight group for the virtual text and the sign |
 | `sign` | string | sign placed in the gutter, one or two cells wide; `""` draws none |
-| `virt_text_pos` | string | extmark `virt_text_pos`: `eol`, `right_align`, or `off` for no virtual text |
-| `auto_save` | boolean | when false, nothing is written unless `require("annotate.notes").save(true)` is called |
+| `virt_text_pos` | string | extmark `virt_text_pos`: `eol`, `right_align`, or `off` (or `""`) for no virtual text |
 | `storage_file` | string or function | JSON file the notes are written to; a function is called at every read and write |
 
 ## Highlights <!-- tag: highlights -->
 
 | group | default | applies to |
 | --- | --- | --- |
-| `AnnotateNote` | `Todo` | the note's virtual text and its sign |
-
-Defined with `default = true`, so a colorscheme that sets this group takes
-precedence.
+| `AnnotateNote` | `Todo` | the note's virtual text |
+| `AnnotateSign` | `AnnotateNote` | the note's sign in the gutter |
 
 ## API <!-- tag: api -->
 
@@ -153,7 +147,7 @@ notes.remove(file, lnum)      -- remove it, returns whether there was one
 notes.list()                  -- every note: { file, lnum, text }, ordered
 notes.clear_file(file)
 notes.clear_all()
-notes.save(true)              -- write the store even with auto_save = false
+notes.save()                  -- write the store now
 
 notes.set_at_cursor()         -- the functions the commands call
 notes.delete_at_cursor()

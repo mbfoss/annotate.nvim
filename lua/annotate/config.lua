@@ -12,13 +12,11 @@ local M = {}
 ---@class annotate.Config
 ---@field symbol string        prefix drawn before the note text
 ---@field priority integer     extmark priority for the virtual text
----@field hl string            highlight group for the virtual text
 ---@field sign string          sign placed in the gutter; "" for none
----@field virt_text_pos "off"|"eol"|"right_align"  extmark `virt_text_pos`, or
----                        "off" to draw no virtual text. A note sits at column
----                        0, so the placements that need one ("inline",
----                        "overlay") have nothing to attach to.
----@field auto_save boolean    write the store after every change
+---@field virt_text_pos ""|"off"|"eol"|"right_align"  extmark `virt_text_pos`,
+---                        or "off" (or "") to draw no virtual text. A note sits
+---                        at column 0, so the placements that need one
+---                        ("inline", "overlay") have nothing to attach to.
 ---@field storage_file string|fun():string  JSON file the notes are written to,
 ---                        or a function returning it. A function is resolved at
 ---                        every read and write, so it can return a path that
@@ -32,9 +30,7 @@ local function _defaults()
         symbol        = "⚑",
         priority      = 50,
         sign          = "", -- one or two cells in the gutter; "" draws none
-        hl            = "AnnotateNote",
         virt_text_pos = "eol",
-        auto_save     = true,
         storage_file  = vim.fs.joinpath(vim.fn.stdpath("data"), "annotate.json"),
     }
 end

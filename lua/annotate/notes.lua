@@ -36,9 +36,9 @@ local function _notify(msg, level)
 end
 
 --- How a note is drawn: virtual text on its line, a sign in the gutter, or
---- both. `virt_text_pos = "off"` and `sign = ""` each turn their half off, so
---- a sign-only note is the pair of them; a note with neither is still a note,
---- and still in `:Annotate list`, it just leaves the line alone.
+--- both. `virt_text_pos = "off"` (or `""`) and `sign = ""` each turn their half
+--- off, so a sign-only note is the pair of them; a note with neither is still a
+--- note, and still in `:Annotate list`, it just leaves the line alone.
 ---@param text string
 ---@return vim.api.keyset.set_extmark
 local function _extmark_opts(text)
@@ -49,24 +49,29 @@ local function _extmark_opts(text)
         priority = cfg.priority,
     }
 
-    if cfg.virt_text_pos ~= "off" then
-        opts.virt_text = { { (" %s %s"):format(cfg.symbol, text), cfg.hl } }
+    if cfg.virt_text_pos ~= "off" and cfg.virt_text_pos ~= "" then
+        opts.virt_text = { { (" %s %s"):format(cfg.symbol, text), "AnnotateNote" } }
         opts.virt_text_pos = cfg.virt_text_pos --[[@as "eol"|"right_align"]]
     end
 
     if cfg.sign ~= "" then
         opts.sign_text = cfg.sign
-        opts.sign_hl_group = cfg.hl
+        opts.sign_hl_group = "AnnotateSign"
     end
 
     return opts
 end
 
---- A colorscheme clears highlight groups, so the group is (re)defined whenever
---- one is loaded. `default = true` throughout: a colorscheme that has an
---- opinion about `AnnotateNote` wins over this one.
+--- The note's two halves colour separately: `AnnotateNote` for the virtual
+--- text, `AnnotateSign` for the gutter sign, which links to the first so that
+--- setting one colours both until the sign is given a colour of its own.
+---
+--- A colorscheme clears highlight groups, so they are (re)defined whenever one
+--- is loaded. `default = true` throughout: a colorscheme, or a user, that has
+--- an opinion about either group wins over this one.
 local function _define_hl()
     vim.api.nvim_set_hl(0, "AnnotateNote", { link = "Todo", default = true })
+    vim.api.nvim_set_hl(0, "AnnotateSign", { link = "AnnotateNote", default = true })
 end
 
 ---@param file string
@@ -153,8 +158,7 @@ end
 
 -------- PUBLIC API --------
 
---- Write the notes out. A no-op with `auto_save = false`, which leaves saving
---- entirely to the caller.
+--- Write the notes out.
 ---
 --- Stored lines, not live ones: the store describes the file on disk, and a
 --- modified buffer's extmarks describe an edit that may never be written. A
@@ -163,10 +167,8 @@ end
 --- good the moment the edit is thrown away. Where the buffer *has* been
 --- written, `util/fileextmarks` syncs the stored line from it on
 --- `BufWritePost` before this runs, so the two agree.
----@param force boolean?  save even with `auto_save = false`
-function M.save(force)
+function M.save()
     if not _loaded then return end
-    if not (force or config.values.auto_save) then return end
     store.save(_collect(false))
 end
 
