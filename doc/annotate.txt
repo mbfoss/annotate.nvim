@@ -11,11 +11,11 @@ Table of Contents                                 *annotate-table-of-contents*
 6. Highlights                                            |annotate-highlights|
 7. API                                                          |annotate-api|
 8. License                                                  |annotate-license|
-Line-anchored notes for Neovim, under a single `:Annotate` command.
+Line-anchored notes for Neovim, under a single `:Annotate` command. A note is
+displayed as virtual text at the end of its line, follows the line as the file
+is edited.
 
-A note is displayed as virtual text at the end of its line, follows the line as
-the file is edited, and is stored outside the file itself. By default nothing
-is written into the project.
+
 
   command               description
   --------------------- ------------------------------------------
@@ -186,7 +186,6 @@ for use from other code.
     notes.list()                  -- every note: { file, lnum, text }, ordered
     notes.clear_file(file)
     notes.clear_all()
-    notes.save()                  -- write the store now
     
     notes.set_at_cursor()         -- the functions the commands call
     notes.delete_at_cursor()

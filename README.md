@@ -148,7 +148,6 @@ notes.remove(file, lnum)      -- remove it, returns whether there was one
 notes.list()                  -- every note: { file, lnum, text }, ordered
 notes.clear_file(file)
 notes.clear_all()
-notes.save()                  -- write the store now
 
 notes.set_at_cursor()         -- the functions the commands call
 notes.delete_at_cursor()
