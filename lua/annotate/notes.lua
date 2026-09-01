@@ -23,7 +23,6 @@ local ui           = require("annotate.ui")
 local _group
 
 local _loaded = false
-local _root ---@type string?
 
 --- Extmark ids are per namespace and only have to be unique within it;
 --- counting up from one and never reusing is enough, since a session sets
@@ -89,13 +88,12 @@ function M.load()
         callback = _define_hl,
     })
 
-    _root = config.values.root()
     -- The prefix every namespace and augroup `util/fileextmarks` creates is
     -- named after; claimed once, before any group is defined.
     fileextmarks.init("annotate")
     _group = fileextmarks.define_group("notes")
 
-    for _, note in ipairs(store.load(_root)) do
+    for _, note in ipairs(store.load()) do
         _last_id = _last_id + 1
         _group.set_file_extmark(_last_id, note.file, note.lnum, 0, _extmark_opts(note.text), { text = note.text })
     end
@@ -169,7 +167,7 @@ end
 function M.save(force)
     if not _loaded then return end
     if not (force or config.values.auto_save) then return end
-    store.save(assert(_root), _collect(false))
+    store.save(_collect(false))
 end
 
 --- Set the note on a line, replacing any note already there.
@@ -225,7 +223,7 @@ function M.clear_file(file)
     M.save()
 end
 
---- Remove every note in the project.
+--- Remove every note in the store.
 function M.clear_all()
     M.load()
     assert(_group).remove_extmarks()
@@ -290,9 +288,9 @@ function M.clear_current_file()
     end)
 end
 
---- Remove every note in the project, after confirmation.
+--- Remove every note in the store, after confirmation.
 function M.clear_all_confirm()
-    ui.confirm("Clear all notes in this project", function(confirmed)
+    ui.confirm("Clear all notes", function(confirmed)
         if confirmed then M.clear_all() end
     end)
 end
@@ -306,12 +304,11 @@ function M.select()
         return
     end
 
-    local root = assert(_root)
     vim.ui.select(notes, {
         prompt = "Notes",
         format_item = function(note)
             return ("%s:%d  %s"):format(
-                vim.fs.relpath(root, note.file) or note.file,
+                vim.fn.fnamemodify(note.file, ":~:."),
                 note.lnum,
                 note.text:gsub("%s+", " "))
         end,

@@ -19,9 +19,12 @@ local M = {}
 ---                        0, so the placements that need one ("inline",
 ---                        "overlay") have nothing to attach to.
 ---@field auto_save boolean    write the store after every change
----@field root fun():string    project root the notes are stored against
----@field storage_file string|fun():string  JSON file the notes of every project are
----                        written to, or a function returning it
+---@field storage_file string|fun():string  JSON file the notes are written to,
+---                        or a function returning it. A function is resolved at
+---                        every read and write, so it can return a path that
+---                        depends on the current directory or buffer -- which
+---                        is how the notes are kept per project rather than in
+---                        one store.
 
 ---@return annotate.Config
 local function _defaults()
@@ -32,38 +35,12 @@ local function _defaults()
         hl            = "AnnotateNote",
         virt_text_pos = "eol",
         auto_save     = true,
-        root          = nil, ---@diagnostic disable-line: assign-type-mismatch
         storage_file  = vim.fs.joinpath(vim.fn.stdpath("data"), "annotate.json"),
     }
 end
 
---- The project the notes belong to: the work tree the current directory is in,
---- or the current directory itself when it is not in a repository. Notes are
---- stored per root, so the same file annotated from two projects (a worktree
---- and a checkout of it, say) keeps two sets.
----@return string
-local _root_cache = {}
-
-local function _default_root()
-    local cwd = vim.fs.normalize(vim.uv.cwd() or ".")
-    local cached = _root_cache[cwd]
-    if cached then return cached end
-
-    -- One `git` call per directory, remembered: the root is asked for on every
-    -- note that is set or looked up, and the answer cannot change while the
-    -- current directory stays put.
-    local root = cwd
-    local out = vim.fn.systemlist({ "git", "-C", cwd, "rev-parse", "--show-toplevel" })
-    if vim.v.shell_error == 0 and out[1] and out[1] ~= "" then
-        root = vim.fs.normalize(out[1])
-    end
-    _root_cache[cwd] = root
-    return root
-end
-
 ---@type annotate.Config
 M.values = _defaults()
-M.values.root = _default_root
 
 --- Neovim rejects a `sign_text` that is not one or two cells wide, and it
 --- would do so on every note rather than here, so a sign that cannot be drawn

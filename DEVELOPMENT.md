@@ -9,9 +9,9 @@ see [README.md](README.md).
 ```
 plugin/annotate.lua             version guard, lazy :Annotate, first-file hook
 lua/annotate/init.lua           :Annotate dispatch, completion, setup()
-lua/annotate/config.lua         defaults, and the project root behind the store
+lua/annotate/config.lua         defaults and `setup()`
 lua/annotate/notes.lua          the feature: what a note is, and the commands
-lua/annotate/store.lua          per-project JSON persistence
+lua/annotate/store.lua          JSON persistence
 lua/annotate/util/
     extmarks.lua                extmarks keyed by file rather than by buffer
     ui.lua                      cursor location, prompting, jumping to a note
@@ -102,14 +102,23 @@ ones under the configuration they were created with.
 
 ## Storage
 
-`store.lua` writes one JSON file per project root under
-`stdpath("data")/annotate/`, named `<basename>-<sha256[:12]>.json` — the
-basename so the directory can be read by a human, the digest because that is
-what actually distinguishes two roots with the same name.
+`store.lua` writes one JSON file, `stdpath("data")/annotate.json` by default,
+holding the notes as a map from file to the notes on it. There is no project
+inside the store: it holds whatever the session hands it, and a store per
+project is a `storage_file` that returns a path inside the project.
 
-Notes are stored relative to the root when they are under it, absolute when
-they are not (a header read out of `/usr/include`), so moving or re-cloning a
-project does not orphan them.
+`storage_file` may be a function, resolved at every read and write rather than
+once, so the path can depend on something not known at `setup()` time — the
+current directory or buffer, which is what a per-project store keys off.
+
+Notes are stored relative to the directory the store is in when they are under
+it, absolute when they are not (a header read out of `/usr/include`, or every
+note in the default store under `stdpath("data")`). A store kept inside a
+project therefore survives that project being moved or cloned elsewhere.
+
+A store written by version 1 — the notes of every project in one file, bucketed
+by project root — is flattened on read: the roots are absolute, so each bucket
+becomes notes on absolute paths, and the next write is in the new format.
 
 Writes go to `<store>.tmp` and are renamed over the store, so a store that
 exists is always a complete one: saving happens on `VimLeavePre` among other
@@ -117,22 +126,9 @@ places, where a process that goes away mid-write would otherwise leave a
 truncated file behind. Clearing the last note removes the store rather than
 leaving an empty one.
 
-A store that is missing is a project with no notes. One that is unreadable or
+A store that is missing is a store with no notes yet. One that is unreadable or
 malformed is reported and treated the same way — a corrupt file costs the
 session its notes, never its startup.
-
-## The project root
-
-`config.values.root()` answers "which project is this", and the answer is
-`git rev-parse --show-toplevel` of the current directory, falling back to the
-current directory itself. It is memoised per directory: it is asked on every
-note and cannot change while the directory stays put, and it forks `git`.
-
-It is a function in the configuration rather than a fixed value so that a
-`rooter`-style setup can hand over its own notion of a project.
-
-`notes.load()` resolves it once, at load, and holds it for the session — the
-store a session writes back is the one it read.
 
 ## UI
 

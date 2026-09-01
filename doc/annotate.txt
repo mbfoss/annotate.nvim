@@ -11,103 +11,121 @@ Table of Contents                                 *annotate-table-of-contents*
 6. Highlights                                            |annotate-highlights|
 7. API                                                          |annotate-api|
 8. License                                                  |annotate-license|
-Notes attached to lines of your files, under a single `:Annotate` command.
+Line-anchored notes for Neovim, under a single `:Annotate` command.
 
-A note is drawn as virtual text at the end of its line, follows that line as
-you edit the file, and is still there the next time you open the project.
-Nothing is written into the project itself.
+A note is displayed as virtual text at the end of its line, follows the line as
+the file is edited, and is stored outside the file itself. By default nothing
+is written into the project.
 
-  command               what it does
+  command               description
   --------------------- ------------------------------------------
   Annotate [set]        add or edit the note on the current line
   Annotate delete       remove the note on the current line
-  Annotate list         pick a note and jump to it
-  Annotate qflist       put every note in the quickfix list
+  Annotate list         select a note and jump to it
+  Annotate qflist       send every note to the quickfix list
   Annotate clear_file   remove every note in the current file
-  Annotate clear_all    remove every note in the project
+  Annotate clear_all    remove every note in the store
 
 ==============================================================================
 1. Requirements                                        *annotate-requirements*
 
-Neovim >= 0.10. `git` is used, if it is on your `PATH`, only to decide which
-project a file belongs to.
+Neovim >= 0.10. No other dependencies.
 
 
 ==============================================================================
 2. Installation                                        *annotate-installation*
 
-With any plugin manager, or by dropping the repository into your package path.
-There is nothing to configure and no setup call to make: `:Annotate` registers
-itself when the plugin loads, and the plugin’s own modules are read only when
-the command is first used or a file with notes is opened.
+With `vim.pack`, Neovim 0.12’s built-in plugin manager:
 
 >lua
-    { "annotate.nvim" }
+    vim.pack.add({ "https://github.com/mbfoss/annotate.nvim" })
 <
 
-From `pack/*/opt`, `packadd` it as usual:
+With lazy.nvim <https://github.com/folke/lazy.nvim>:
 
 >lua
-    vim.cmd.packadd("annotate.nvim")
+    { "mbfoss/annotate.nvim" }
 <
 
-`packadd!` works too when it runs during startup, since `plugin/` scripts are
-sourced in the normal pass afterwards; after startup use the plain `packadd`,
-which sources them itself.
+There is no required setup call: `:Annotate` is registered when the plugin
+loads, and the plugin’s modules are loaded on first use or when a file with
+notes is opened.
 
 
 ==============================================================================
 3. Notes                                                      *annotate-notes*
 
 `:Annotate` with no arguments, or `:Annotate set`, prompts for the text of a
-note on the current line. Running it on a line that already has one offers the
-existing text for editing; submitting an empty prompt removes the note.
+note on the current line. On a line that already has a note, the existing text
+is offered for editing; submitting an empty prompt removes the note.
 
-A note is drawn as virtual text at the end of its line, as a sign in the
-gutter, or as both. `sign` sets the sign character and `""` turns it off;
-`virt_text_pos = "off"` turns the virtual text off. With both off a note is
-invisible in the buffer but still listed by `:Annotate list` and `qflist`.
+A note can be displayed as virtual text at the end of its line, as a sign in
+the gutter, or both. `sign` sets the sign character, and `""` disables it;
+`virt_text_pos = "off"` disables the virtual text. With both disabled, a note
+is invisible in the buffer but still appears in `:Annotate list` and `:Annotate
+qflist`.
 
-A note is an extmark, so it tracks its line through inserts and deletes above
-it rather than sitting at a line number that drifts out from under it. Lines
-are recorded as they stand when the file is written.
+Notes are extmarks, so they track their line through inserts and deletes above
+them instead of holding a fixed line number. Line numbers are recorded as they
+stand when the file is written.
 
-Deleting an annotated line does not throw the note away. It collapses onto the
-line that takes the deleted one’s place, or onto the last line of the file
-when the delete ran to the end, so the note is still visible and still
-reachable from `:Annotate list` – to be moved back where you want it, or
-removed with `:Annotate delete`.
+Deleting an annotated line does not discard the note. It moves to the line that
+takes the deleted line’s place, or to the last line of the file if the delete
+extended to the end. The note remains visible and reachable from `:Annotate
+list`, where it can be moved or removed with `:Annotate delete`.
 
-`:Annotate list` opens `vim.ui.select` over every note in the project — the
-picker you already use, if you have one installed — and jumps to the one you
-choose. `:Annotate qflist` puts the same list in the quickfix window, which is
-the better of the two for reading through notes rather than jumping to one.
+`:Annotate list` opens `vim.ui.select` over every note in the store and jumps
+to the selected one. `:Annotate qflist` sends the same list to the quickfix
+window, which is more suitable for reading through notes than for jumping to a
+single one.
 
 `:Annotate delete` removes the note on the current line. `:Annotate clear_file`
 and `:Annotate clear_all` remove every note in the current file or in the whole
-project, after a confirmation.
+store, after a confirmation.
 
 
 ==============================================================================
 4. Storage                                                  *annotate-storage*
 
-Notes are stored in one JSON file, `stdpath("data")/annotate.json`, keyed by
-project. The project is the work tree the current directory is in, or the
-current directory itself when it is not in a repository.
+Notes are stored in a single JSON file, `stdpath("data")/annotate.json` by
+default, as a map from file to the notes on it:
 
-Nothing is written into the project, so notes are never something to commit or
-to add to a `.gitignore`, and a repository checked out twice keeps a set of
-notes per checkout. Paths inside the project are stored relative to it, so
-moving or re-cloning a project does not orphan its notes.
+>json
+    {
+      "version": 2,
+      "notes": {
+        "/home/me/proj/lua/init.lua": [{ "lnum": 12, "text": "rewrite this" }]
+      }
+    }
+<
+
+To keep notes per project, set `storage_file` to a function returning a path.
+It is resolved at every read and write, so it can depend on the current buffer
+or directory:
+
+>lua
+    require("annotate").setup({
+        storage_file = function()
+            local root = vim.fs.root(0, ".git") or assert(vim.uv.cwd())
+            return vim.fs.joinpath(root, ".annotate.json")
+        end,
+    })
+<
+
+That writes `.annotate.json` in the root of the current git repository, which
+is then a file to commit or to add to `.gitignore`. Paths are stored relative
+to the directory the store is in when they are under it, so such a store
+survives the project being moved or cloned elsewhere; a note on a file outside
+that directory keeps its absolute path.
 
 The store is written when a note changes, when a buffer holding notes is
-written, and on exit.
+written, and on exit. A store left with no notes is removed.
 
 
 ==============================================================================
 5. Configuration                                      *annotate-configuration*
 
-Calling `setup()` is optional and only needed to change a default.
+`setup()` is optional and only needed to change a default.
 
 >lua
     require("annotate").setup({
@@ -117,7 +135,6 @@ Calling `setup()` is optional and only needed to change a default.
         sign          = "",         -- one or two cells in the gutter; "" draws none
         virt_text_pos = "eol",      -- or "right_align", or "off"
         auto_save     = true,       -- write the store as notes change
-        root          = nil,        -- function returning the project root
         storage_file  = nil,        -- path, or a function returning one; defaults
                                     -- to stdpath("data")/annotate.json
     })
@@ -141,32 +158,29 @@ Calling `setup()` is optional and only needed to change a default.
                                                   text
 
   auto_save               boolean                 when false, nothing is written unless
-                                                  you call
                                                   require("annotate.notes").save(true)
+                                                  is called
 
-  root                    function                returns the project root the notes are
-                                                  stored against
-
-  storage_file            string or function      JSON file the notes of every project
-                                                  are written to; a function is called
-                                                  at every read and write
+  storage_file            string or function      JSON file the notes are written to; a
+                                                  function is called at every read and
+                                                  write
   --------------------------------------------------------------------------------------
 
 ==============================================================================
 6. Highlights                                            *annotate-highlights*
 
-  group          default   what it colours
+  group          default   applies to
   -------------- --------- --------------------------------------
   AnnotateNote   Todo      the note’s virtual text and its sign
-Defined with `default = true`, so a colorscheme that has an opinion about it
-wins.
+Defined with `default = true`, so a colorscheme that sets this group takes
+precedence.
 
 
 ==============================================================================
 7. API                                                          *annotate-api*
 
-`require("annotate.notes")` is the feature itself, for keymaps and for driving
-it from your own code.
+`require("annotate.notes")` exposes the functionality directly, for keymaps and
+for use from other code.
 
 >lua
     local notes = require("annotate.notes")
@@ -179,7 +193,7 @@ it from your own code.
     notes.clear_all()
     notes.save(true)              -- write the store even with auto_save = false
     
-    notes.set_at_cursor()         -- what the commands run
+    notes.set_at_cursor()         -- the functions the commands call
     notes.delete_at_cursor()
     notes.select()
     notes.qflist()

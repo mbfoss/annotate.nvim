@@ -8,7 +8,7 @@ local config = require("annotate.config")
 ---   Annotate list       pick a note and jump to it
 ---   Annotate qflist     put every note in the quickfix list
 ---   Annotate clear_file remove every note in the current file
----   Annotate clear_all  remove every note in the project
+---   Annotate clear_all  remove every note in the store
 ---
 --- This module owns only argument parsing and completion, as `M.run` and
 --- `M.complete`; the command itself is registered in `plugin/annotate.lua`,

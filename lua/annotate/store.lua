@@ -4,34 +4,34 @@ local config = require("annotate.config")
 
 --- Where the notes live between sessions.
 ---
---- One JSON file for every project, under `stdpath("data")`, with the notes
---- keyed by project root inside it. Nothing is written into the project
---- itself: notes are a private reading aid, not something to commit, and a
---- repository checked out twice keeps a set per checkout because the root --
---- not the file -- is the key.
+--- One JSON file, `stdpath("data")/annotate.json` by default, holding every
+--- note as a map from file to the notes on it. There is no project in the
+--- store: it is the notes of whoever reads it. A store per project is a
+--- `storage_file` that returns a path inside the project, which is also what
+--- makes two checkouts of a repository keep two sets.
 ---
---- Paths are stored relative to their root wherever they are under it, so
---- moving or cloning a project elsewhere does not orphan its notes. A note on
---- a file outside the root (a header opened from `/usr/include`, a dependency
---- read out of tree) keeps its absolute path.
+--- Paths are stored relative to the directory the store itself is in when they
+--- are under it, so a store kept inside a project survives the project being
+--- moved or cloned elsewhere. A note on a file outside that directory -- every
+--- note, for the default store under `stdpath("data")` -- keeps its absolute
+--- path.
 ---
---- Every write rewrites the whole file, roots this session never touched
---- included, so reading is always immediately before writing and the two are
---- never far enough apart for another session's notes to be read stale and
---- written back over.
+--- Every write replaces the whole file, so reading and writing are never far
+--- enough apart for another session's notes to be read stale and written back
+--- over.
 
-local _VERSION = 1
+local _VERSION = 2
 
 ---@class annotate.StoredNote
----@field file string   relative to the root when under it, absolute otherwise
 ---@field lnum integer  1-based
 ---@field text string
 
 ---@class annotate.StoredFile
 ---@field version integer
----@field roots table<string, annotate.StoredNote[]>
+---@field notes table<string, annotate.StoredNote[]>  keyed by file, relative
+---                        to the store's directory when under it
 
---- The file every project's notes are written to.
+--- The file the notes are written to.
 ---
 --- `storage_file` may be a function so that the path can depend on something
 --- that is not known at `setup()` time -- the current directory, say -- and
@@ -43,29 +43,65 @@ function M.path()
     return vim.fs.normalize(file)
 end
 
----@param root string
+---@param file string
+---@return boolean
+local function _is_absolute(file)
+    return vim.fs.normalize(file):sub(1, 1) == "/" or file:match("^%a:[/\\]") ~= nil
+end
+
+---@param base string  the store's directory
 ---@param file string  absolute
 ---@return string
-local function _relative(root, file)
-    return vim.fs.relpath(root, file) or file
+local function _relative(base, file)
+    return vim.fs.relpath(base, file) or file
 end
 
----@param root string
+---@param base string  the store's directory
 ---@param file string  relative or absolute
 ---@return string absolute
-local function _absolute(root, file)
-    if vim.fs.normalize(file):sub(1, 1) == "/" or file:match("^%a:[/\\]") then
-        return vim.fs.normalize(file)
-    end
-    return vim.fs.normalize(vim.fs.joinpath(root, file))
+local function _absolute(base, file)
+    if _is_absolute(file) then return vim.fs.normalize(file) end
+    return vim.fs.normalize(vim.fs.joinpath(base, file))
 end
 
---- Read the whole store. A file that is missing is simply a store with no
---- notes in it yet; one that is unreadable or malformed is reported and
---- treated the same way, so a corrupt file costs the session its notes but
---- never its startup.
----@return table<string, annotate.StoredNote[]>
-local function _read()
+---@param note any
+---@return boolean
+local function _valid(note)
+    return type(note) == "table" and type(note.text) == "string" and type(note.lnum) == "number"
+end
+
+--- Version 1 kept the notes of every project in one file, bucketed by project
+--- root, with the paths inside a bucket relative to that root. Those roots are
+--- absolute, so flattening them loses nothing: what was a bucket for a project
+--- other than this one becomes a note on an absolute path, still listed and
+--- still removable.
+---@param data table
+---@return { file:string, lnum:integer, text:string }[]
+local function _from_v1(data)
+    local notes = {}
+    for root, stored in pairs(data.roots) do
+        if type(root) == "string" and type(stored) == "table" then
+            for _, note in ipairs(stored) do
+                if _valid(note) and type(note.file) == "string" then
+                    notes[#notes + 1] = {
+                        file = _absolute(root, note.file),
+                        lnum = math.max(1, math.floor(note.lnum)),
+                        text = note.text,
+                    }
+                end
+            end
+        end
+    end
+    return notes
+end
+
+--- Every note in the store, as absolute paths.
+---
+--- A file that is missing is simply a store with no notes in it yet; one that
+--- is unreadable or malformed is reported and treated the same way, so a
+--- corrupt file costs the session its notes but never its startup.
+---@return { file:string, lnum:integer, text:string }[]
+function M.load()
     local path = M.path()
     local fd = io.open(path, "r")
     if not fd then return {} end
@@ -74,83 +110,74 @@ local function _read()
     if not content or content == "" then return {} end
 
     local ok, data = pcall(vim.json.decode, content)
-    if not ok or type(data) ~= "table" or type(data.roots) ~= "table" then
+    if not ok or type(data) ~= "table" then
         vim.notify(("[annotate] ignoring unreadable store %s"):format(path), vim.log.levels.WARN)
         return {}
     end
 
-    local roots = {}
-    for root, notes in pairs(data.roots) do
-        if type(root) == "string" and type(notes) == "table" then
-            roots[root] = notes
-        end
-    end
-    return roots
-end
+    if type(data.roots) == "table" then return _from_v1(data) end
 
---- The notes recorded for `root`, as absolute paths.
----@param root string
----@return { file:string, lnum:integer, text:string }[]
-function M.load(root)
+    if type(data.notes) ~= "table" then
+        vim.notify(("[annotate] ignoring unreadable store %s"):format(path), vim.log.levels.WARN)
+        return {}
+    end
+
+    local base = vim.fs.dirname(path)
     local notes = {}
-    for _, note in ipairs(_read()[root] or {}) do
-        if type(note) == "table" and type(note.file) == "string"
-            and type(note.text) == "string" and type(note.lnum) == "number" then
-            notes[#notes + 1] = {
-                file = _absolute(root, note.file),
-                lnum = math.max(1, math.floor(note.lnum)),
-                text = note.text,
-            }
+    for file, stored in pairs(data.notes) do
+        if type(file) == "string" and type(stored) == "table" then
+            for _, note in ipairs(stored) do
+                if _valid(note) then
+                    notes[#notes + 1] = {
+                        file = _absolute(base, file),
+                        lnum = math.max(1, math.floor(note.lnum)),
+                        text = note.text,
+                    }
+                end
+            end
         end
     end
     return notes
 end
 
---- Write `notes` for `root`, replacing whatever was there and leaving the
---- other roots as they are.
+--- Write `notes`, replacing the store.
 ---
 --- Written to a temporary file in the same directory and renamed over the
 --- store, so a store that exists is always a complete one: this runs on
 --- `VimLeavePre` among other places, where a process that goes away mid-write
---- would otherwise leave a truncated file behind. A root with no notes drops
---- out of the store, and a store with no roots left is removed rather than
---- written empty.
----@param root string
+--- would otherwise leave a truncated file behind. A store with no notes left
+--- is removed rather than written empty.
 ---@param notes { file:string, lnum:integer, text:string }[]
 ---@return boolean ok
-function M.save(root, notes)
+function M.save(notes)
     local path = M.path()
-    local roots = _read()
 
     if #notes == 0 then
-        roots[root] = nil
-        if next(roots) == nil then
-            os.remove(path)
-            return true
-        end
-    else
-        ---@type annotate.StoredNote[]
-        local stored = {}
-        for _, note in ipairs(notes) do
-            stored[#stored + 1] = {
-                file = _relative(root, note.file),
-                lnum = note.lnum,
-                text = note.text,
-            }
-        end
-        table.sort(stored, function(a, b)
-            if a.file ~= b.file then return a.file < b.file end
-            return a.lnum < b.lnum
-        end)
-        roots[root] = stored
+        os.remove(path)
+        return true
     end
 
-    local dir = vim.fs.dirname(path)
-    if vim.fn.isdirectory(dir) == 0 then
-        vim.fn.mkdir(dir, "p")
+    local base = vim.fs.dirname(path)
+    ---@type table<string, annotate.StoredNote[]>
+    local by_file = {}
+    for _, note in ipairs(notes) do
+        local file = _relative(base, note.file)
+        local list = by_file[file]
+        if not list then
+            list = {}
+            by_file[file] = list
+        end
+        list[#list + 1] = { lnum = note.lnum, text = note.text }
+    end
+    for _, list in pairs(by_file) do
+        table.sort(list, function(a, b) return a.lnum < b.lnum end)
     end
 
-    local content = vim.json.encode({ version = _VERSION, roots = roots })
+    if vim.fn.isdirectory(base) == 0 then
+        vim.fn.mkdir(base, "p")
+    end
+
+    local content = vim.json.encode({ version = _VERSION, notes = by_file })
 
     local tmp = path .. ".tmp"
     local fd = io.open(tmp, "w")
