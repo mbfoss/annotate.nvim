@@ -2,6 +2,9 @@
 
 Line-anchored notes for Neovim, under a single `:Annotate` command.
 
+<img width="821" height="381" alt="image" src="https://github.com/user-attachments/assets/36520892-07e4-453d-bf07-657adef14516" />
+
+
 A note is displayed as virtual text at the end of its line, follows the line as
 the file is edited, and is stored outside the file itself. By default nothing is
 written into the project.
