@@ -89,22 +89,24 @@ require("annotate").setup({
 That writes `.annotate.json` in the root of the current git repository, which
 is then a file to commit or to add to `.gitignore`.
 
-Paths are stored relative to the directory the store is in when they are under
-it, so such a store survives the project being moved or cloned elsewhere; a
-note on a file outside that directory keeps its absolute path.
+Paths are relative to the store's directory when they are under it, so a
+project store survives the project being moved or cloned; a note on a file
+outside it keeps its absolute path.
 
-The store is read once, when the plugin loads, and written when a note
-changes, when a buffer holding notes is written, and on exit. Each write
-re-reads the store and merges into it: a note added by another session since
-this one started is kept, a note this session edited wins over the copy on
-disk, and a note it deleted is dropped. Notes are identified by file and line,
-so two sessions annotating the same line keep the note written last.
-`Annotate clear_all` is the exception -- it empties the store outright, other
-sessions' notes included. A store left with no notes is removed.
+The store is read when the plugin loads, and read again when a directory
+change points `storage_file` at a different file. It is written whenever a
+note changes, when a buffer holding notes is saved, and on exit. A store with
+no notes left in it is deleted.
 
-The merge is not locking. Two writes landing in the same instant can still
-lose one; two sessions saving seconds or minutes apart, which is the normal
-case, will not.
+Several Neovim sessions can share a store. Each write merges into what is on
+disk: the notes this session added, edited or deleted win, and every other
+note is left alone. Notes are identified by file and line, so if two sessions
+annotate the same line, the one that writes last wins. `:Annotate clear_all`
+is the exception -- it empties the store, other sessions' notes included.
+
+There is no locking. Two writes landing in the same instant can still lose
+one, but sessions saving seconds or minutes apart -- the normal case -- will
+not.
 
 ## Configuration <!-- tag: configuration -->
 
