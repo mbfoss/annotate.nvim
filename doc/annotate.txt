@@ -1,0 +1,231 @@
+*annotate*                               Notes attached to lines of your files
+
+==============================================================================
+Table of Contents                                 *annotate-table-of-contents*
+
+1. Requirements                                        |annotate-requirements|
+2. Installation                                        |annotate-installation|
+3. Notes                                                      |annotate-notes|
+4. Storage                                                  |annotate-storage|
+5. Configuration                                      |annotate-configuration|
+6. Health                                                    |annotate-health|
+7. Highlights                                            |annotate-highlights|
+8. API                                                          |annotate-api|
+9. License                                                  |annotate-license|
+
+  [!NOTE] **Work in progress.** The plugin is stable and usable, but it is still
+  evolving. Breaking changes can happen at any time. Pin a commit if you need a
+  fixed version.
+Line-anchored notes for Neovim, managed with the `:Annotate` command. A note
+appears as virtual text at the end of its line and follows the line through
+edits.
+
+
+
+  command               description
+  --------------------- ------------------------------------------
+  Annotate [set]        add or edit the note on the current line
+  Annotate delete       remove the note on the current line
+  Annotate list         select a note and jump to it
+  Annotate qflist       send every note to the quickfix list
+  Annotate clear_file   remove every note in the current file
+  Annotate clear_all    remove every note in the store
+
+==============================================================================
+1. Requirements                                        *annotate-requirements*
+
+Neovim >= 0.10. No other dependencies.
+
+
+==============================================================================
+2. Installation                                        *annotate-installation*
+
+`vim.pack`, Neovim 0.12’s built-in plugin manager:
+
+>lua
+    vim.pack.add({ "https://github.com/mbfoss/annotate.nvim" })
+<
+
+lazy.nvim <https://github.com/folke/lazy.nvim>:
+
+>lua
+    { "mbfoss/annotate.nvim", lazy = false }
+<
+
+No setup call is required: `:Annotate` is registered when the plugin loads, and
+the plugin’s modules load on first use or when a file with notes is opened.
+
+`lazy = false` is still required. Notes are read when a file opens, so loading
+the plugin only on the first `:Annotate` would leave earlier files without
+their notes.
+
+
+==============================================================================
+3. Notes                                                      *annotate-notes*
+
+- `:Annotate` asks for the note text on the current line. An existing note’s
+    text seeds the prompt for editing; an empty submission deletes it.
+- Notes show as virtual text (default), as a sign in the gutter, or both.
+- Notes are stored as extmarks, so they follow their line through edits instead
+    of staying at a fixed line number. The line number is saved when the buffer is
+    saved.
+- Deleting an annotated line does not delete the note. It moves to the line
+    that takes its place.
+- `:Annotate list` uses `vim.ui.select` to pick a note and jump to it. A
+    `vim.ui.select` override, such as Telescope, replaces the default prompt.
+- `:Annotate qflist` sends every note to the quickfix list.
+
+
+==============================================================================
+4. Storage                                                  *annotate-storage*
+
+Notes are kept in one JSON file, `stdpath("data")/annotate.json` by default,
+keyed by absolute file path and holding every project’s notes together.
+
+>json
+    {
+      "notes": {
+        "/home/me/proj/lua/init.lua": [{ "lnum": 12, "text": "rewrite this" }]
+      }
+    }
+<
+
+Set `storage_file` to use another JSON file. It must be an absolute path. A
+function or a relative path is refused with a warning, and the default store is
+used instead: either one resolves against the current directory, which could
+put notes in another project’s store.
+
+>lua
+    require("annotate").setup({
+        storage_file = vim.fs.joinpath(vim.fn.stdpath("data"), "notes.json"),
+    })
+<
+
+Behaviour:
+
+- The store is fixed when the session starts. It does not follow the current
+    directory, so `:cd`, `:lcd` and `'autochdir'` do not move notes to another
+    project’s store.
+- It is read when the plugin loads and written whenever a note changes or a
+    buffer holding notes is saved. A store with no notes left in it is deleted.
+- A single store grows with every annotated project, and `:Annotate list` /
+    `:Annotate qflist` show notes from every project. Notes for files that were
+    moved or deleted remain until you clear them.
+
+Several Neovim sessions can share a store:
+
+- Each write merges with the file on disk. Notes this session added, edited or
+    deleted take precedence; other notes are unchanged.
+- Notes are identified by file and line, so if two sessions annotate the same
+    line, the last write wins.
+- `:Annotate clear_all` is the exception: it empties the store, including other
+    sessions’ notes.
+- There is no locking. Two simultaneous writes can lose one note. Writes from
+    sessions that save at different times are safe.
+
+
+==============================================================================
+5. Configuration                                      *annotate-configuration*
+
+`setup()` is optional and only needed to change a default.
+
+>lua
+    require("annotate").setup({
+        symbol        = "⚑",        -- drawn before the note text
+        priority      = 50,         -- extmark priority of the virtual text
+        sign          = "",         -- one or two cells in the gutter; "" draws none
+        virt_text_pos = "eol",      -- or "right_align", or "off" ("") for none
+        storage_file  = nil,        -- absolute path; defaults to
+                                    -- stdpath("data")/annotate.json
+    })
+<
+
+  -------------------------------------------------------------------------------
+  option                  type                    description
+  ----------------------- ----------------------- -------------------------------
+  symbol                  string                  prefix drawn before the note
+                                                  text
+
+  priority                number                  extmark priority for the
+                                                  virtual text
+
+  sign                    string                  sign placed in the gutter, one
+                                                  or two cells wide; "" draws
+                                                  none
+
+  virt_text_pos           string                  extmark virt_text_pos: eol,
+                                                  right_align, or off (or "") for
+                                                  no virtual text
+
+  storage_file            string                  absolute path of the JSON file
+                                                  the notes are written to;
+                                                  unset, or set to something that
+                                                  is not an absolute path, means
+                                                  stdpath("data")/annotate.json
+  -------------------------------------------------------------------------------
+
+==============================================================================
+6. Health                                                    *annotate-health*
+
+>vim
+    :checkhealth annotate
+<
+
+Reports:
+
+- the command;
+- the store in force: the file the notes are read from and written to, whether
+    it exists yet, and whether its directory does;
+- as an error, a `storage_file` the plugin had to refuse, with what it refused;
+- the options that differ from the defaults;
+- as a warning, any option name annotate does not define. `setup()` merges the
+    table as given, so a misspelled name would otherwise be ignored.
+
+
+==============================================================================
+7. Highlights                                            *annotate-highlights*
+
+  group          default        applies to
+  -------------- -------------- -------------------------------
+  AnnotateNote   Todo           the note’s virtual text
+  AnnotateSign   AnnotateNote   the note’s sign in the gutter
+
+==============================================================================
+8. API                                                          *annotate-api*
+
+`require("annotate.notes")` exposes the functionality directly, for keymaps and
+for use from other code.
+
+>lua
+    local notes = require("annotate.notes")
+    
+    notes.set(file, lnum, text)   -- add or replace the note on a line
+    notes.get(file, lnum)         -- its text, or nil
+    notes.remove(file, lnum)      -- remove it, returns whether there was one
+    notes.list()                  -- every note: { file, lnum, text }, ordered
+    notes.clear_file(file)
+    notes.clear_all()             -- empties the store, other sessions included
+    
+    notes.set_at_cursor()         -- the functions the commands call
+    notes.delete_at_cursor()
+    notes.select()
+    notes.qflist()
+    notes.clear_current_file()
+    notes.clear_all_confirm()
+<
+
+>lua
+    vim.keymap.set("n", "<leader>na", require("annotate.notes").set_at_cursor)
+    vim.keymap.set("n", "<leader>nd", require("annotate.notes").delete_at_cursor)
+    vim.keymap.set("n", "<leader>nl", require("annotate.notes").select)
+<
+
+
+==============================================================================
+9. License                                                  *annotate-license*
+
+MIT <LICENSE>.
+
+Generated by panvimdoc <https://github.com/kdheepak/panvimdoc>
+
+vim:tw=78:ts=8:noet:ft=help:norl:
