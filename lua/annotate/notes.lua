@@ -107,6 +107,7 @@ function M.load()
     -- that directory changes.
     vim.api.nvim_create_autocmd("DirChanged", {
         group = augroup,
+        pattern = "global",
         callback = function() M.reload() end,
     })
 end
