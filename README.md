@@ -131,6 +131,18 @@ require("annotate").setup({
 | `virt_text_pos` | string | extmark `virt_text_pos`: `eol`, `right_align`, or `off` (or `""`) for no virtual text |
 | `storage_file` | string or function | JSON file the notes are written to; a function is called when the notes are read and on every current-directory change, and may return nil for the default store |
 
+## Health <!-- tag: health -->
+
+```vim
+:checkhealth annotate
+```
+
+Reports the command, the note store in force -- what `storage_file` resolves to
+now, whether it exists yet and whether its directory does -- and the options
+that differ from the defaults. An option name annotate does not define is
+reported as a warning: `setup()` merges the table you pass wholesale, so a
+misspelled one would otherwise be accepted in silence.
+
 ## Highlights <!-- tag: highlights -->
 
 | group | default | applies to |

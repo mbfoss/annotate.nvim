@@ -8,9 +8,10 @@ Table of Contents                                 *annotate-table-of-contents*
 3. Notes                                                      |annotate-notes|
 4. Storage                                                  |annotate-storage|
 5. Configuration                                      |annotate-configuration|
-6. Highlights                                            |annotate-highlights|
-7. API                                                          |annotate-api|
-8. License                                                  |annotate-license|
+6. Health                                                    |annotate-health|
+7. Highlights                                            |annotate-highlights|
+8. API                                                          |annotate-api|
+9. License                                                  |annotate-license|
 Line-anchored notes for Neovim, under a single `:Annotate` command. A note is
 displayed as virtual text at the end of its line, follows the line as the file
 is edited.
@@ -171,7 +172,21 @@ but sessions saving seconds or minutes apart – the normal case – will not.
   -----------------------------------------------------------------------
 
 ==============================================================================
-6. Highlights                                            *annotate-highlights*
+6. Health                                                    *annotate-health*
+
+>vim
+    :checkhealth annotate
+<
+
+Reports the command, the note store in force – what `storage_file` resolves
+to now, whether it exists yet and whether its directory does – and the
+options that differ from the defaults. An option name annotate does not define
+is reported as a warning: `setup()` merges the table you pass wholesale, so a
+misspelled one would otherwise be accepted in silence.
+
+
+==============================================================================
+7. Highlights                                            *annotate-highlights*
 
   group          default        applies to
   -------------- -------------- -------------------------------
@@ -179,7 +194,7 @@ but sessions saving seconds or minutes apart – the normal case – will not.
   AnnotateSign   AnnotateNote   the note’s sign in the gutter
 
 ==============================================================================
-7. API                                                          *annotate-api*
+8. API                                                          *annotate-api*
 
 `require("annotate.notes")` exposes the functionality directly, for keymaps and
 for use from other code.
@@ -210,7 +225,7 @@ for use from other code.
 
 
 ==============================================================================
-8. License                                                  *annotate-license*
+9. License                                                  *annotate-license*
 
 MIT
 
