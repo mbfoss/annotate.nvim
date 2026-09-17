@@ -1,6 +1,6 @@
 local M = {}
 
-local config       = require("annotate.config")
+local config       = require("annotate.config").current
 local fileextmarks = require("annotate.util.fileextmarks")
 local store        = require("annotate.store")
 local ui           = require("annotate.ui")
@@ -32,20 +32,19 @@ end
 ---@param text string
 ---@return vim.api.keyset.set_extmark
 local function _extmark_opts(text)
-    local cfg = config.values
     ---@type vim.api.keyset.set_extmark
     local opts = {
         hl_mode = "combine",
-        priority = cfg.priority,
+        priority = config.priority,
     }
 
-    if cfg.virt_text_pos ~= "off" and cfg.virt_text_pos ~= "" then
-        opts.virt_text = { { (" %s %s"):format(cfg.symbol, text), "AnnotateNote" } }
-        opts.virt_text_pos = cfg.virt_text_pos --[[@as "eol"|"right_align"]]
+    if config.virt_text_pos ~= "off" and config.virt_text_pos ~= "" then
+        opts.virt_text = { { (" %s %s"):format(config.symbol, text), "AnnotateNote" } }
+        opts.virt_text_pos = config.virt_text_pos --[[@as "eol"|"right_align"]]
     end
 
-    if cfg.sign ~= "" then
-        opts.sign_text = cfg.sign
+    if config.sign ~= "" then
+        opts.sign_text = config.sign
         opts.sign_hl_group = "AnnotateSign"
     end
 

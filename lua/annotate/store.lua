@@ -33,7 +33,7 @@ end
 --- meaning the default store. Differing from `M.path()` is what `reload` acts on.
 ---@return string
 function M.resolve()
-    local file = config.values.storage_file
+    local file = config.current.storage_file
     if type(file) == "function" then file = file() end
     if type(file) ~= "string" or file == "" then file = config.default_storage_file() end
     return vim.fs.normalize(file)
