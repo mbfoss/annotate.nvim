@@ -1,8 +1,8 @@
 # annotate.nvim
 
-Line-anchored notes for Neovim, under a single `:Annotate` command.
-A note is displayed as virtual text at the end of its line, follows the line as
-the file is edited.
+Line-anchored notes for Neovim, under a single `:Annotate` command. A note is
+displayed as virtual text at the end of its line and follows the line as the
+file is edited.
 
 <img width="821" height="381" alt="image" src="https://github.com/user-attachments/assets/36520892-07e4-453d-bf07-657adef14516" />
 
@@ -22,46 +22,38 @@ Neovim >= 0.10. No other dependencies.
 
 ## Installation <!-- tag: installation -->
 
-With `vim.pack`, Neovim 0.12's built-in plugin manager:
+`vim.pack`, Neovim 0.12's built-in plugin manager:
 
 ```lua
 vim.pack.add({ "https://github.com/mbfoss/annotate.nvim" })
 ```
 
-With [lazy.nvim](https://github.com/folke/lazy.nvim):
+[lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 { "mbfoss/annotate.nvim" }
 ```
 
-There is no required setup call: `:Annotate` is registered when the plugin
-loads, and the plugin's modules are loaded on first use or when a file with
-notes is opened.
+No setup call is required: `:Annotate` is registered when the plugin loads, and
+the plugin's modules load on first use or when a file with notes is opened.
 
 ## Notes <!-- tag: notes -->
 
-`:Annotate` asks for the note text on the current line. If the line already has
-a note, the prompt starts with the old text so you can edit it. Submit an empty
-prompt to delete it.
-
-Notes show as virtual text (default), as a sign in the gutter, or both.
-
-Notes are extmarks, so they follow their line as you edit the file instead of
-sticking to a line number; the note line number is saved when the buffer is
-saved.
-
-Deleting an annotated line does not delete the note. It moves to the line that
-takes its place.
-
-`:Annotate list` picks a note with `vim.ui.select` and jumps to it, so a
-`vim.ui.select` override such as Telescope is worth having. `:Annotate qflist`
-sends them all to the quickfix list, which is better for reading through notes
-than for jumping to one.
+- `:Annotate` asks for the note text on the current line. An existing note's
+  text seeds the prompt for editing; an empty submission deletes it.
+- Notes show as virtual text (default), as a sign in the gutter, or both.
+- Notes are extmarks, so they follow their line as you edit instead of sticking
+  to a line number; the line number is saved when the buffer is saved.
+- Deleting an annotated line does not delete the note: it moves to the line
+  that takes its place.
+- `:Annotate list` picks a note with `vim.ui.select` and jumps to it, so a
+  `vim.ui.select` override such as Telescope is worth having.
+- `:Annotate qflist` sends them all to the quickfix list — better for reading
+  through notes than for jumping to one.
 
 ## Storage <!-- tag: storage -->
 
-Notes are stored in a single JSON file, `stdpath("data")/annotate.json` by
-default.
+Notes live in a single JSON file, `stdpath("data")/annotate.json` by default.
 
 ```json
 {
@@ -71,10 +63,10 @@ default.
 }
 ```
 
-To keep notes per project, set `storage_file` to a function returning a path.
-It is called when the notes are read and whenever the current directory
-changes, so it can depend on that directory: change it and the notes of the
-project you left are written out and replaced by the ones kept there.
+For notes per project, set `storage_file` to a function returning a path. It is
+called when the notes are read and whenever the current directory changes, so
+it can depend on that directory: change it and the notes of the project you
+left are written out and replaced by the ones kept there.
 
 ```lua
 require("annotate").setup({
@@ -86,27 +78,29 @@ require("annotate").setup({
 })
 ```
 
-That writes `.annotate.json` in the root of the current git repository, which
-is then a file to commit or to add to `.gitignore`.
+That writes `.annotate.json` in the root of the current git repository — a file
+to commit, or to add to `.gitignore`.
 
-Paths are relative to the store's directory when they are under it, so a
-project store survives the project being moved or cloned; a note on a file
-outside it keeps its absolute path.
+Behaviour:
 
-The store is read when the plugin loads, and read again when a directory
-change points `storage_file` at a different file. It is written whenever a
-note changes, when a buffer holding notes is saved, and on exit. A store with
-no notes left in it is deleted.
+- Paths are relative to the store's directory when they are under it, so a
+  project store survives the project being moved or cloned; a note on a file
+  outside it keeps its absolute path.
+- The store is read when the plugin loads, and again when a directory change
+  points `storage_file` at a different file.
+- It is written whenever a note changes, when a buffer holding notes is saved,
+  and on exit. A store with no notes left in it is deleted.
 
-Several Neovim sessions can share a store. Each write merges into what is on
-disk: the notes this session added, edited or deleted win, and every other
-note is left alone. Notes are identified by file and line, so if two sessions
-annotate the same line, the one that writes last wins. `:Annotate clear_all`
-is the exception -- it empties the store, other sessions' notes included.
+Several Neovim sessions can share a store:
 
-There is no locking. Two writes landing in the same instant can still lose
-one, but sessions saving seconds or minutes apart -- the normal case -- will
-not.
+- Each write merges into what is on disk: the notes this session added, edited
+  or deleted win, and every other note is left alone.
+- Notes are identified by file and line, so if two sessions annotate the same
+  line, the one that writes last wins.
+- `:Annotate clear_all` is the exception — it empties the store, other
+  sessions' notes included.
+- There is no locking. Two writes landing in the same instant can still lose
+  one; sessions saving seconds or minutes apart — the normal case — will not.
 
 ## Configuration <!-- tag: configuration -->
 
@@ -137,11 +131,14 @@ require("annotate").setup({
 :checkhealth annotate
 ```
 
-Reports the command, the note store in force -- what `storage_file` resolves to
-now, whether it exists yet and whether its directory does -- and the options
-that differ from the defaults. An option name annotate does not define is
-reported as a warning: `setup()` merges the table you pass wholesale, so a
-misspelled one would otherwise be accepted in silence.
+Reports:
+
+- the command;
+- the note store in force — what `storage_file` resolves to now, whether it
+  exists yet, and whether its directory does;
+- the options that differ from the defaults;
+- as a warning, any option name annotate does not define: `setup()` merges the
+  table wholesale, so a misspelled one would otherwise be accepted in silence.
 
 ## Highlights <!-- tag: highlights -->
 
