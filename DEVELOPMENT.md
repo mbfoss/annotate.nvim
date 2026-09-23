@@ -60,7 +60,7 @@ without asking for anything:
 
 A note has to survive what an extmark does not: it is restored from disk before
 anything is open, it outlives the buffer being unloaded, and it must come back
-on the right line when the file is opened again — while in between tracking the
+on the right line when the file is opened again, while in between tracking the
 user's edits, which is exactly what an extmark is for and a stored line number
 is not.
 
@@ -107,7 +107,7 @@ inside the store: it holds whatever the session hands it, and a store per
 project is a `storage_file` returning a path inside the project.
 
 `storage_file` may be a function, so the path can depend on something not known
-at `setup()` time — the current directory, which is what a per-project store
+at `setup()` time: the current directory, which is what a per-project store
 keys off:
 
 - `store.resolve()` calls it.
@@ -127,7 +127,7 @@ Following the current directory is a re-read, not a different write target:
   from, drops every mark, and draws the new store instead.
 - Nothing is carried across: a note belongs to the store it was read from, and
   keeping it would copy it into the next one at the first save.
-- Where the two agree — a single store for every project, the default — the
+- Where the two agree (a single store for every project, the default), the
   notes are left alone.
 - `store.load()` clears the held path along with the baseline, which is what
   lets that re-read resolve the store again.
@@ -164,8 +164,8 @@ the user has installed.
 
 `ui.open` prefers a window in the current tab that already shows the file,
 falls back to editing in the current window, and never opens into a floating
-window — a note picked from a float would otherwise replace the float's own
-buffer.
+window, since a note picked from a float would otherwise replace the float's
+own buffer.
 
 ## Help file
 

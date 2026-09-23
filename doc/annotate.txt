@@ -64,8 +64,8 @@ the plugin’s modules load on first use or when a file with notes is opened.
     that takes its place.
 - `:Annotate list` picks a note with `vim.ui.select` and jumps to it, so a
     `vim.ui.select` override such as Telescope is worth having.
-- `:Annotate qflist` sends them all to the quickfix list — better for reading
-    through notes than for jumping to one.
+- `:Annotate qflist` sends them all to the quickfix list, which is better for
+    reading through notes than for jumping to one.
 
 
 ==============================================================================
@@ -96,8 +96,8 @@ left are written out and replaced by the ones kept there.
     })
 <
 
-That writes `.annotate.json` in the root of the current git repository — a
-file to commit, or to add to `.gitignore`.
+That writes `.annotate.json` in the root of the current git repository: a file
+to commit, or to add to `.gitignore`.
 
 Behaviour:
 
@@ -115,10 +115,10 @@ Several Neovim sessions can share a store:
     or deleted win, and every other note is left alone.
 - Notes are identified by file and line, so if two sessions annotate the same
     line, the one that writes last wins.
-- `:Annotate clear_all` is the exception — it empties the store, other
+- `:Annotate clear_all` is the exception: it empties the store, other
     sessions’ notes included.
 - There is no locking. Two writes landing in the same instant can still lose
-    one; sessions saving seconds or minutes apart — the normal case — will not.
+    one; sessions saving seconds or minutes apart (the normal case) will not.
 
 
 ==============================================================================
@@ -176,7 +176,7 @@ Several Neovim sessions can share a store:
 Reports:
 
 - the command;
-- the note store in force — what `storage_file` resolves to now, whether it
+- the note store in force: what `storage_file` resolves to now, whether it
     exists yet, and whether its directory does;
 - the options that differ from the defaults;
 - as a warning, any option name annotate does not define: `setup()` merges the
