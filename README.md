@@ -178,4 +178,12 @@ vim.keymap.set("n", "<leader>nl", require("annotate.notes").select)
 
 ## License <!-- tag: license -->
 
-MIT
+[MIT](LICENSE).
+
+<!-- panvimdoc-ignore-start -->
+
+## Development <!-- tag: development -->
+
+Internals, tests and conventions: [DEVELOPMENT.md](DEVELOPMENT.md).
+
+<!-- panvimdoc-ignore-end -->
