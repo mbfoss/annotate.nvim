@@ -1,4 +1,4 @@
----@brief Health check for annotate.nvim — run with `:checkhealth annotate`.
+---@brief Health check for annotate.nvim - run with `:checkhealth annotate`.
 ---
 ---Reports the Neovim version, the command, the note store in force, and the
 ---options that differ from the defaults. `setup()` is optional, so the config is
@@ -95,7 +95,7 @@ local function _diff_config(current, defaults, prefix, out)
     return out
 end
 
----Report the options that differ from the defaults — the whole config would be
+---Report the options that differ from the defaults - the whole config would be
 ---mostly untouched defaults, and the point here is what this user changed.
 ---Anything set that the plugin does not define is flagged: `setup()` merges
 ---`opts` wholesale, so a misspelled option is kept silently.
