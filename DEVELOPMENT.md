@@ -12,7 +12,7 @@ lua/annotate/config.lua         defaults and `setup()`
 lua/annotate/notes.lua          the feature: what a note is, and the commands
 lua/annotate/store.lua          JSON persistence
 lua/annotate/util/
-    extmarks.lua                extmarks keyed by file rather than by buffer
+    fileextmarks.lua                extmarks keyed by file rather than by buffer
     ui.lua                      cursor location, prompting, jumping to a note
     usercmd.lua                 argument splitting + subcommand completion
 ```
