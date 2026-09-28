@@ -785,6 +785,7 @@ end
 ---@field get_extmark_by_location fun(file:string, line:number, live:boolean): annotate.util.fileextmarks.MarkInfo?
 ---@field get_extmarks fun(live:boolean): annotate.util.fileextmarks.MarkInfo[]
 ---@field get_file_extmarks fun(file:string, live:boolean): annotate.util.fileextmarks.MarkInfo[]
+---@field sync fun(bufnr:integer)   -- fold live positions into the durable ones
 ---@field refresh fun()
 
 --- Claims the prefix used for every namespace and augroup this module creates.
@@ -849,6 +850,11 @@ function M.define_group(group)
         end,
         get_file_extmarks = function(file, live)
             return _get_file_extmarks(file, group_data, live)
+        end,
+        ---Folds live positions into the durable ones, for a caller about to write
+        ---them down. Assumes the buffer holds the file's own text.
+        sync = function(bufnr)
+            _sync_file_extmarks(bufnr)
         end,
         refresh = function()
             _refresh_group(group_data, group)

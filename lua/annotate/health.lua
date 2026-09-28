@@ -32,30 +32,20 @@ local function _check_command()
     end
 end
 
----The file notes are read from and written to. `storage_file` may be a function
----called at every read, so this reports what it resolves to now, and whether
----the fallback is standing in for it.
+---The file notes are read from and written to: one store, wherever
+---`storage_file` points when that is usable, else the default.
 local function _check_store()
     health.start("annotate: note store")
 
-    local config = require("annotate.config")
-    local file   = config.current.storage_file
-    if type(file) == "function" then
-        local ok, resolved = pcall(file)
-        if not ok then
-            health.error(("`storage_file` raised: %s"):format(resolved))
-            return
-        end
-        file = resolved
-    end
-
-    local fallback = false
-    if type(file) ~= "string" or file == "" then
-        file, fallback = config.default_storage_file(), true
-    end
-
+    local store  = require("annotate.store")
+    local file   = store.path() -- what is in force, complaint included
     local exists = vim.uv.fs_stat(file) ~= nil
-    health.info(("notes are stored in %s%s"):format(file, fallback and " (the default)" or ""))
+
+    health.info(("notes are stored in %s"):format(file))
+    if store.complaint then
+        health.error(store.complaint, { "Set `storage_file` to an absolute path" })
+    end
+
     if exists then
         health.ok("the store exists")
     else

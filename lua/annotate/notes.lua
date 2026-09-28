@@ -95,19 +95,14 @@ function M.load()
     _draw(store.load())
 
     local augroup = vim.api.nvim_create_augroup("annotate.save", { clear = true })
-    -- Writing a file makes the lines the notes drifted to the lines on disk,
-    -- so the store is out of date even if no note was touched.
-    vim.api.nvim_create_autocmd({ "BufWritePost", "VimLeavePre" }, {
+    -- Writing a file makes the lines the notes drifted to the lines on disk, so
+    -- the marks are synced first and the store written even if no note moved.
+    vim.api.nvim_create_autocmd("BufWritePost", {
         group = augroup,
-        callback = function() M.save() end,
-    })
-
-    -- A `storage_file` under the current directory names another store once
-    -- that directory changes.
-    vim.api.nvim_create_autocmd("DirChanged", {
-        group = augroup,
-        pattern = "global",
-        callback = function() M.reload() end,
+        callback = function(ev)
+            assert(_group).sync(ev.buf)
+            M.save()
+        end,
     })
 end
 
@@ -130,17 +125,6 @@ function M.refresh()
     local notes = M.list()
     group.remove_extmarks()
     _draw(notes)
-end
-
---- Read the store again, where the current directory now names another one.
---- The notes are saved to the store they came from, and none are carried across.
-function M.reload()
-    if not _loaded then return end
-    if store.resolve() == store.path() then return end
-
-    M.save()
-    assert(_group).remove_extmarks()
-    _draw(store.load())
 end
 
 --- Every note, ordered by file and then by line.

@@ -13,12 +13,11 @@ local M = {}
 ---@field sign string          sign placed in the gutter; "" for none
 ---@field virt_text_pos ""|"off"|"eol"|"right_align"  extmark `virt_text_pos`,
 ---                        or "off" (or "") for no virtual text
----@field storage_file string|fun():string?  JSON file the notes are written to,
----                        or a function returning it, called at the read and on
----                        every directory change; nil means the default store
+---@field storage_file string  absolute path of the JSON file the notes are
+---                        written to; nil or "" means the default store
 
---- The store used when nothing else is configured, and the fallback for a
---- `storage_file` function that returns nil.
+--- The store used when nothing else is configured, and when `storage_file`
+--- names something unusable.
 ---@return string
 function M.default_storage_file()
     return vim.fs.joinpath(vim.fn.stdpath("data"), "annotate.json")

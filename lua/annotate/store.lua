@@ -2,8 +2,8 @@ local M = {}
 
 local config = require("annotate.config")
 
---- Where the notes live between sessions: one JSON file, a map from file to the
---- notes on it, with paths relative to the store's directory when under it.
+--- Where the notes live between sessions: one JSON file for the whole session,
+--- a map from file to the notes on it, paths relative to its own directory.
 
 ---@class annotate.StoredNote
 ---@field lnum integer  1-based
@@ -29,28 +29,51 @@ local function _key(note)
     return ("%s\0%d"):format(note.file, note.lnum)
 end
 
---- The store `storage_file` names now: the call to it, with anything but a path
---- meaning the default store. Differing from `M.path()` is what `reload` acts on.
+---@param file string
+---@return boolean
+local function _is_absolute(file)
+    return vim.fs.normalize(file):sub(1, 1) == "/" or file:match("^%a:[/\\]") ~= nil
+end
+
+--- Why `storage_file` was not used, if it named something unusable. Reported by
+--- `:checkhealth annotate`, which should not have to guess.
+---@type string?
+M.complaint = nil
+
+local _warned = false
+
+---@param msg string
+local function _warn(msg)
+    M.complaint = msg
+    if _warned then return end
+    _warned = true
+    vim.notify("[annotate] " .. msg, vim.log.levels.WARN)
+end
+
+--- The one store in force: `storage_file` when it is an absolute path, the
+--- default otherwise. A function or a relative path is refused, not followed --
+--- either one re-samples the current directory, which is what put notes in
+--- another project's store with nothing left to detect it.
 ---@return string
-function M.resolve()
+local function _resolve()
     local file = config.current.storage_file
-    if type(file) == "function" then file = file() end
-    if type(file) ~= "string" or file == "" then file = config.default_storage_file() end
-    return vim.fs.normalize(file)
+    if type(file) == "string" and file ~= "" then
+        if _is_absolute(file) then return vim.fs.normalize(file) end
+        _warn(("`storage_file` must be an absolute path; using the default store instead of %s")
+            :format(file))
+    elseif file ~= nil then
+        _warn(("`storage_file` must be an absolute path; using the default store instead of %s")
+            :format(vim.inspect(file)))
+    end
+    return config.default_storage_file()
 end
 
 --- The file the notes are read from and written to. Held from first use so a
 --- read and the writes merging against it cannot be about two different files.
 ---@return string
 function M.path()
-    _path = _path or M.resolve()
+    _path = _path or _resolve()
     return _path
-end
-
----@param file string
----@return boolean
-local function _is_absolute(file)
-    return vim.fs.normalize(file):sub(1, 1) == "/" or file:match("^%a:[/\\]") ~= nil
 end
 
 ---@param base string  the store's directory
@@ -141,7 +164,7 @@ local function _read(path, quiet)
 end
 
 --- Every note in the store, as absolute paths, kept as the baseline later
---- writes merge against. Resolves the store again: this path is the one they use.
+--- writes merge against.
 ---@return { file:string, lnum:integer, text:string }[]
 function M.load()
     _path = nil
@@ -180,6 +203,8 @@ function M.save(notes, replace)
     local path = M.path()
     local merged = replace and notes or _merge(notes, _read(path, true))
 
+    -- From `notes`, never `merged`: a note kept from another session has to stay
+    -- out of the baseline, or the next write adopts it as ours and drops it.
     local function agreed()
         _baseline = {}
         for _, note in ipairs(notes) do

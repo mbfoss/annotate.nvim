@@ -53,7 +53,8 @@ the plugin's modules load on first use or when a file with notes is opened.
 
 ## Storage <!-- tag: storage -->
 
-Notes live in a single JSON file, `stdpath("data")/annotate.json` by default.
+Notes live in one JSON file, `stdpath("data")/annotate.json` by default, keyed
+by absolute file path and holding every project's notes together.
 
 ```json
 {
@@ -63,33 +64,27 @@ Notes live in a single JSON file, `stdpath("data")/annotate.json` by default.
 }
 ```
 
-For notes per project, set `storage_file` to a function returning a path. It is
-called when the notes are read and whenever the current directory changes, so
-it can depend on that directory: change it and the notes of the project you
-left are written out and replaced by the ones kept there.
+Set `storage_file` to move it, as an absolute path. A function or a relative
+path is refused, with a warning, and the default store is used instead. Either
+one is re-decided against the current directory, which is how notes ended up in
+another project's store with nothing left to detect it.
 
 ```lua
 require("annotate").setup({
-    storage_file = function()
-        local root = vim.fs.root(0, ".git")
-        if not root then return nil end -- no repository: use the default store
-        return vim.fs.joinpath(root, ".annotate.json")
-    end,
+    storage_file = vim.fs.joinpath(vim.fn.stdpath("data"), "notes.json"),
 })
 ```
 
-That writes `.annotate.json` in the root of the current git repository: a file
-to commit, or to add to `.gitignore`.
-
 Behaviour:
 
-- Paths are relative to the store's directory when they are under it, so a
-  project store survives the project being moved or cloned; a note on a file
-  outside it keeps its absolute path.
-- The store is read when the plugin loads, and again when a directory change
-  points `storage_file` at a different file.
-- It is written whenever a note changes, when a buffer holding notes is saved,
-  and on exit. A store with no notes left in it is deleted.
+- The store is the one the session started with: it never follows the current
+  directory, so `:cd`, `:lcd` and `'autochdir'` cannot move your notes into
+  another project's store.
+- It is read when the plugin loads and written whenever a note changes or a
+  buffer holding notes is saved. A store with no notes left in it is deleted.
+- One store for everything means it grows with every project you annotate, and
+  `:Annotate list` / `:Annotate qflist` show every note everywhere. Notes on
+  files you have since moved or deleted stay in it until you clear them.
 
 Several Neovim sessions can share a store:
 
@@ -112,8 +107,8 @@ require("annotate").setup({
     priority      = 50,         -- extmark priority of the virtual text
     sign          = "",         -- one or two cells in the gutter; "" draws none
     virt_text_pos = "eol",      -- or "right_align", or "off" ("") for none
-    storage_file  = nil,        -- path, or a function returning one; defaults
-                                -- to stdpath("data")/annotate.json
+    storage_file  = nil,        -- absolute path; defaults to
+                                -- stdpath("data")/annotate.json
 })
 ```
 
@@ -123,7 +118,7 @@ require("annotate").setup({
 | `priority` | number | extmark priority for the virtual text |
 | `sign` | string | sign placed in the gutter, one or two cells wide; `""` draws none |
 | `virt_text_pos` | string | extmark `virt_text_pos`: `eol`, `right_align`, or `off` (or `""`) for no virtual text |
-| `storage_file` | string or function | JSON file the notes are written to; a function is called when the notes are read and on every current-directory change, and may return nil for the default store |
+| `storage_file` | string | absolute path of the JSON file the notes are written to; unset, or set to something that is not an absolute path, means `stdpath("data")/annotate.json` |
 
 ## Health <!-- tag: health -->
 
@@ -134,8 +129,9 @@ require("annotate").setup({
 Reports:
 
 - the command;
-- the note store in force: what `storage_file` resolves to now, whether it
-  exists yet, and whether its directory does;
+- the store in force: the file the notes are read from and written to, whether
+  it exists yet, and whether its directory does;
+- as an error, a `storage_file` the plugin had to refuse, with what it refused;
 - the options that differ from the defaults;
 - as a warning, any option name annotate does not define: `setup()` merges the
   table wholesale, so a misspelled one would otherwise be accepted in silence.
