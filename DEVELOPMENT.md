@@ -23,8 +23,10 @@ lua/annotate/util/
 ## Loading
 
 - `plugin/annotate.lua` is the only module read at startup. It registers
-  `:Annotate` through `util/usercmd` (the argument splitter and completion
-  dispatcher, which knows nothing about the subcommands).
+  `:Annotate`, running the implementation through `pcall` (reporting a raised
+  error with `vim.notify`), and delegates completion to `util/usercmd` (the
+  argument splitter and completion dispatcher, which knows nothing about the
+  subcommands).
 - Its run / completion callbacks are `require("annotate").run` / `.complete`
   behind a `require` performed at call time, so `init.lua` and the modules it
   pulls in are read on the first `:Annotate` (or first `<Tab>`), not before.
