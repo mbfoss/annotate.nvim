@@ -5,10 +5,6 @@ local M = {}
 
 ---@alias annotate.util.usercmd.subcommand fun(cmd:string,rest:string[],arg_lead:string):string[]
 
----@alias annotate.util.usercmd.run_fn
----| fun(cmd:string,args:string[],opts:vim.api.keyset.create_user_command.command_args)
-
-
 --- Completion for a command registered with `nargs = "*"`, called from inside
 --- the `complete` callback so nothing is required until first used.
 ---@param arg_lead string
@@ -39,23 +35,6 @@ function M.complete(arg_lead, cmd_line, subcommand)
     end
 
     return filter(subcommand(parsed.cmd, rest, arg_lead))
-end
-
---- Body of a command registered with `nargs = "*"`: hands `fargs` to `run_fn`,
---- reporting any error as a notification rather than a stack trace.
----@param opts vim.api.keyset.create_user_command.command_args
----@param run_fn annotate.util.usercmd.run_fn
-function M.handle(opts, run_fn)
-    local cmd = opts.name
-    -- nargs="*" always yields fargs; the fallback is only to satisfy its
-    -- optional type.
-    local ok, err = pcall(run_fn, cmd, opts.fargs or {}, opts)
-    if not ok then
-        vim.notify(
-            "[annotate.util.nvim] " .. cmd .. " command error\n" .. tostring(err),
-            vim.log.levels.ERROR
-        )
-    end
 end
 
 return M

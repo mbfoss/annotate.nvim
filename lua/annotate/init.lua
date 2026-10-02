@@ -24,8 +24,8 @@ function M.setup(opts)
     end
 end
 
---- `:Annotate`'s implementation, as an `annotate.util.usercmd.run_fn`. Exposed
---- so the command can be registered without this module being loaded.
+--- `:Annotate`'s implementation, `fun(cmd:string,args:string[])`. Exposed so
+--- the command can be registered without this module being loaded.
 function M.run(_, args)
     local sub = args[1]
     local notes = _notes()

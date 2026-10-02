@@ -20,9 +20,15 @@ local function _annotate()
 end
 
 vim.api.nvim_create_user_command("Annotate", function(opts)
-    _usercmd().handle(opts, function(cmd, args, cmd_opts)
-        return _annotate().run(cmd, args, cmd_opts)
-    end)
+    -- nargs="*" always yields fargs; the fallback is only to satisfy its
+    -- optional type. Errors become notifications, not stack traces.
+    local ok, err = pcall(_annotate().run, opts.name, opts.fargs or {}, opts)
+    if not ok then
+        vim.notify(
+            "[annotate.util.nvim] " .. opts.name .. " command error\n" .. tostring(err),
+            vim.log.levels.ERROR
+        )
+    end
 end, {
     nargs = "*",
     desc = "Notes attached to lines of your files",
