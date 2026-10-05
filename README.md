@@ -1,5 +1,10 @@
 # annotate.nvim
 
+> [!NOTE]
+> **Work in progress.** Stable and usable as it stands, but still evolving:
+> changes, including breaking ones, can land at any time. Pin a commit if you
+> need a fixed target.
+
 Line-anchored notes for Neovim, under a single `:Annotate` command. A note is
 displayed as virtual text at the end of its line and follows the line as the
 file is edited.
