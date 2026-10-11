@@ -1,14 +1,21 @@
+--- Extmarks addressed by file path rather than by buffer: positions are
+--- stored, applied when the file is opened, tracked through edits, and
+--- written back on save, so marks survive a buffer being wiped and land on
+--- files that are never opened.
 local M = {}
 
+--- A mark as reported by the getters: the id it was set with, where it now
+--- sits, and where that position came from.
 ---@class annotate.util.fileextmarks.MarkInfo
----@field id number
----@field file string
+---@field id number        -- the id passed to set_file_extmark
+---@field file string        -- normalized path the mark lands on
 ---@field lnum number        -- 1-based
 ---@field col number        -- 0-based
----@field opts vim.api.keyset.set_extmark
----@field user_data any
----@field source "live"|"stored"
+---@field opts vim.api.keyset.set_extmark  -- the options the mark was set with
+---@field user_data any        -- the caller's payload
+---@field source "live"|"stored"  -- which position won: the open buffer or the cache
 
+---@private
 ---@class annotate.util.fileextmarks.MarkData
 ---@field id number
 ---@field ns number
@@ -20,6 +27,16 @@ local M = {}
 ---@alias annotate.util.fileextmarks.ById table<number, annotate.util.fileextmarks.MarkData>
 ---@alias annotate.util.fileextmarks.ByFile table<string, annotate.util.fileextmarks.ById>
 
+--- An argument to `set_file_extmark`: where the mark goes and what it carries.
+---@class annotate.util.fileextmarks.SetOpts
+---@field id number
+---@field file string
+---@field lnum integer        -- 1-based
+---@field col integer        -- 0-based
+---@field user_data any
+---@field opts vim.api.keyset.set_extmark?  -- extmark opts, e.g. end_row/end_col/priority/hl_group
+
+---@private
 ---@class annotate.util.fileextmarks.GroupData
 ---@field ns number
 ---@field byfile annotate.util.fileextmarks.ByFile
@@ -29,8 +46,11 @@ local M = {}
 local _defined_groups = {}
 local _autocmds_registered = false
 
--- Namespaces and autocmd groups live in a process-wide registry keyed by name,
--- while the state above is per instance; the plugin claims a prefix via M.init().
+-- Namespaces and autocmd groups are each process-wide and keyed by name, while
+-- the state above is per module instance. `define_group` takes the namespace name
+-- verbatim and names the group's augroup with it too, asserting both are unused,
+-- so two vendored copies of this file cannot silently share either.
+
 ---@type string?
 local _prefix = nil
 
@@ -45,8 +65,9 @@ local function _prefixed(name)
     return ("%s.%s"):format(_require_prefix(), name)
 end
 
---- Lands every spelling of a file -- relative, or symlinked -- on one key, buffer
---- names included. `resolve()`, since a mark may name a file that is not there.
+--- Lands every spelling of a file -- relative, or through a symlinked component
+--- -- on one key. Buffer names go through it too: Neovim leaves a final-component
+--- symlink unresolved. `resolve()`, since a mark may name a file that is not there.
 ---@param file string
 ---@return string
 local function _normalize_file(file)
@@ -54,12 +75,14 @@ local function _normalize_file(file)
 end
 
 --- Normalized buffer names, keyed by bufnr and validated against the raw name.
---- A miss normalizes every loaded buffer, and most tracked files are not open.
+--- The scan below normalizes every loaded buffer on every miss, and a miss is the
+--- common case: most tracked files are not open.
 ---@type table<integer, { name: string, normalized: string }>
 local _bufname_cache = {}
 
---- `_normalize_file` for a buffer's name, memoized. Re-validating against the raw
---- name heals a rename and a reused buffer number on its own.
+--- `_normalize_file` for a buffer's name, memoized. Two `vim.fn` calls become one
+--- C call and a table lookup; re-validating against the raw name heals a rename
+--- and a reused buffer number on its own.
 ---@param bufnr integer
 ---@param name string        -- the buffer's raw name, non-empty
 ---@return string
@@ -72,6 +95,7 @@ local function _normalized_buf_name(bufnr, name)
     return normalized
 end
 
+---@private
 ---@class annotate.util.fileextmarks.BufCacheEntry
 ---@field bufnr integer
 ---@field name string        -- the buffer's name when it was resolved
@@ -80,8 +104,9 @@ end
 ---@type table<string, annotate.util.fileextmarks.BufCacheEntry>
 local _bufnr_cache = {}
 
---- Walks the buffer list comparing normalized names, so another spelling lands too.
---- Not `vim.fn.bufnr()`: it falls back to a partial match.
+--- Walks the buffer list comparing normalized names, which also lands a buffer
+--- opened by another spelling. `vim.fn.bufnr()` cannot do this job: it falls back
+--- to a partial match, so an untracked file resolves to any name containing it.
 ---@param file string        -- must already be normalized
 ---@return integer
 local function _lookup_loaded_bufnr(file)
@@ -96,7 +121,8 @@ local function _lookup_loaded_bufnr(file)
 end
 
 --- The scan above is a `resolve()` per loaded buffer, so it is cached. Re-validating
---- against the name it was cached under heals wipes, unloads and renames.
+--- the cached answer against the name it was cached under costs three C calls and
+--- heals wipes, unloads and renames itself.
 ---@param file string        -- must already be normalized
 ---@return integer
 local function _get_loaded_bufnr(file)
@@ -119,17 +145,20 @@ local function _get_loaded_bufnr(file)
 end
 
 --- Buffers holding marks, mapped to the normalized file they hold them for:
---- `_on_lines` needs it on every change and cannot re-derive it from the name.
+--- `_on_lines` needs it on every change and cannot afford to re-derive it from the
+--- buffer's name, and a missing entry is what tells the callback to detach.
 ---@type table<integer, string>
 local _attached = {}
 
---- Buffers with a live `on_lines` subscription. Kept out of `_attached`, where a
---- dropped entry only schedules a detach and would stack a second subscription.
+--- Buffers with a live `on_lines` subscription. Kept out of `_attached`: dropping
+--- an entry there only *schedules* a detach, and one table doing both jobs would
+--- read as unsubscribed in that window and stack a second subscription.
 ---@type table<integer, true>
 local _subscribed = {}
 
---- Forgets the cached buffer lookup for `file`, unless some group still tracks it.
---- The cache is shared across groups, so the last one out turns the light off.
+--- Forgets the cached buffer lookup for `file`, unless some group still tracks
+--- it. Call after dropping a file from a group; the cache is shared across
+--- groups, so the last one out turns the light off.
 ---@param file string
 local function _forget_bufnr(file)
     for _, group_data in pairs(_defined_groups) do
@@ -138,15 +167,17 @@ local function _forget_bufnr(file)
 
     _bufnr_cache[file] = nil
 
-    -- Schedule the `on_lines` release too, or the buffer pays a query per group on
-    -- every edit. `_attached` is scanned since `_bufnr_cache` may lack this file.
+    -- Schedule the `on_lines` release too, or the buffer keeps paying a query per
+    -- group on every edit reaching its end. `_attached` is scanned because
+    -- `_bufnr_cache` may never have held this file; `_subscribed` is left alone.
     for bufnr, attached_file in pairs(_attached) do
         if attached_file == file then _attached[bufnr] = nil end
     end
 end
 
---- Call after removing a mark: drops `file` from the group if that was its last,
---- then releases the cache, so an emptied file does not linger as a bare table.
+--- Call after removing a single mark: drops `file` from the group if that was its
+--- last one, then releases the cache. Otherwise an emptied file lingers as a bare
+--- table that every later `_get_extmarks` walks and pays a buffer lookup for.
 ---@param group_data annotate.util.fileextmarks.GroupData
 ---@param file string
 local function _release_file(group_data, file)
@@ -182,20 +213,23 @@ local function _place_extmark(bufnr, mark, lnum, col, ends)
         col = 0
     end
 
-    -- Clamp the range end inside the buffer: `end_col` is measured against its line,
-    -- so a deleted range would throw. `mark.opts` is left alone, so undo restores it.
+    -- Clamp the range end inside the buffer: `end_col` is measured against its
+    -- line, so a range whose text was deleted would throw. `mark.opts` is left
+    -- alone, so an undo restores the whole range; a range that fits allocates nothing.
     local opts = mark.opts
     local end_row, end_col = opts.end_row, opts.end_col
 
-    -- `ends` wins when given: the stored end only moves on a save. Both fields nil
-    -- means a point mark, which must clear a range the stored opts still carry.
+    -- `ends` wins when given: the stored end only moves on a save, so a caller
+    -- holding the live one is holding the truth. Both fields nil means a point
+    -- mark, which has to be able to clear a range the stored opts still carry.
     if ends then end_row, end_col = ends.end_row, ends.end_col end
 
     if end_row or end_col then
         local clamped_row = math.min(end_row or row, line_count - 1)
 
         -- The end may not precede the start: Neovim stores an inverted range in
-        -- silence and the mark just stops rendering.
+        -- silence rather than rejecting it, and the mark just stops rendering.
+        -- Costs a comparison on a path that already clamps.
         clamped_row = math.max(clamped_row, row)
 
         local clamped_col = end_col
@@ -240,6 +274,7 @@ local function _set_extmark(bufnr, mark, store)
     if store then mark.lnum, mark.col = lnum, col end
 end
 
+---@private
 ---@class annotate.util.fileextmarks.LivePos
 ---@field id number
 ---@field lnum number        -- 1-based
@@ -248,7 +283,8 @@ end
 ---@field end_col number?        -- 0-based; nil for a point mark
 
 --- Reports where this group's marks currently sit in `bufnr`. Pure: `_on_lines`
---- keeps every row real, and the clamp is defence for a buffer we failed to attach.
+--- keeps every row real. The clamp is defence in depth for a buffer we failed to
+--- attach to -- better the last line than a line that does not exist.
 ---@param bufnr integer
 ---@param file_table annotate.util.fileextmarks.ById
 ---@param ns integer
@@ -276,15 +312,17 @@ local function _read_live_marks(bufnr, file_table, ns)
     return result
 end
 
---- Re-anchors marks stranded past the end of `bufnr` onto its last line, where they
---- would otherwise never render. Bounded to that tail, so usually free.
+--- Re-anchors marks stranded past the end of `bufnr` onto its last line: a delete
+--- running to the last line leaves them one row past it forever, where nothing
+--- renders and no ranged query finds them. Bounded to that tail, so usually free.
 ---@param bufnr integer
 ---@param file string        -- normalized; from `_attached`, so an edit re-normalizes nothing
 ---@param line_count integer      -- the buffer's line count after the change
 local function _repair_stranded_marks(bufnr, file, line_count)
     for _, group_data in pairs(_defined_groups) do
         -- Matched through `byfile`, not by id: a buffer can hold an extmark for a
-        -- file it no longer holds, and by id that orphan would re-anchor every edit.
+        -- file it is no longer the buffer of, and by id that orphan would resolve
+        -- to its *new* file and be re-anchored here on every edit.
         local file_table = group_data.byfile[file]
         if file_table then
             local stranded = vim.api.nvim_buf_get_extmarks(
@@ -297,8 +335,9 @@ local function _repair_stranded_marks(bufnr, file, line_count)
             for _, m in ipairs(stranded) do
                 local mark = file_table[m[1]]
                 if mark then
-                    -- Clamps onto the last line, live end included, since the stored
-                    -- end would collapse the range. The cached position is left alone.
+                    -- Clamps onto the last line, live end included -- pairing it with
+                    -- the stored end would collapse the range. The cached position is
+                    -- left alone, so the cache keeps describing the file on disk.
                     _place_extmark(bufnr, mark, m[2] + 1, m[3], m[4])
                 end
             end
@@ -306,19 +345,22 @@ local function _repair_stranded_marks(bufnr, file, line_count)
     end
 end
 
---- Fires for every change to an attached buffer, API ones included -- which a
---- TextChanged autocmd misses, stranding marks whenever a plugin edits the buffer.
+--- Fires for every change to an attached buffer, including API ones -- which is
+--- why this replaced a TextChanged autocmd: `nvim_buf_set_lines` fires no
+--- TextChanged, so a plugin editing the buffer stranded marks silently.
 local function _on_lines(_, bufnr, _, _, _, last_new)
-    -- No entry means the last mark for this buffer's file is gone. Returning true is
-    -- the detach path: the next change tears the subscription down.
+    -- No entry means the last mark for this buffer's file is gone. Returning true
+    -- is the whole detach path: an `on_lines` callback can only release itself, so
+    -- `_forget_bufnr` drops the entry and the next change tears the subscription down.
     local file = _attached[bufnr]
     if not file then
         _subscribed[bufnr] = nil
         return true -- detach
     end
 
-    -- Guarded for a second reason: an error here has Neovim drop the subscription
-    -- without `on_detach`, and the stale entry would bar a later `_attach_buffer`.
+    -- Guarded for a second reason: an error escaping here has Neovim drop the
+    -- subscription without calling `on_detach`, and the stale `_subscribed` entry
+    -- would bar `_attach_buffer` from ever replacing it. Nothing else can raise.
     local ok, line_count = pcall(vim.api.nvim_buf_line_count, bufnr)
     if not ok then
         -- State unknown, so hold nothing: detaching costs one re-attach, and the
@@ -328,8 +370,9 @@ local function _on_lines(_, bufnr, _, _, _, last_new)
         return true -- detach
     end
 
-    -- Only a change reaching the end can strand a mark, growth included: a right-
-    -- gravity mark lands on `last_new`. Decided from the range alone, so O(1).
+    -- Only a change reaching the end can strand a mark -- growing the buffer does
+    -- it too, since a right-gravity mark lands on `last_new`. Decided from the
+    -- range alone, so a shorter edit costs O(1) and never touches the extmark tree.
     if last_new < line_count then return end -- change stopped short of the end
 
     -- Swallowed on purpose: an error raised here propagates out of the change that
@@ -366,8 +409,9 @@ local function _clear_buf_namespace(bufnr, ns)
     vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 end
 
---- Whether `bufnr`'s text can be read as the file's own, which gates every write
---- back into the cache: an unsaved edit, or a buffer with no file, is not it.
+--- Whether `bufnr`'s text can be read as the file's own. The stored position
+--- describes what is on disk, so this gates every write from a buffer back into
+--- the cache: an unsaved edit, and a buffer with no file behind it, are not it.
 ---@param bufnr integer
 ---@return boolean
 local function _buf_matches_file(bufnr)
@@ -380,7 +424,8 @@ local function _buf_matches_file(bufnr)
 end
 
 --- Replaces the namespace with this group's stored marks for `bufnr`'s file. The
---- clear collects marks orphaned by an unload or a rename, so it runs first.
+--- clear collects marks orphaned by an unload (deletes skip an unloaded buffer) or
+--- a rename, so it runs unconditionally -- before the name check, which may miss.
 ---@param bufnr integer
 ---@param group string
 local function _apply_buffer_extmarks(bufnr, group)
@@ -396,8 +441,9 @@ local function _apply_buffer_extmarks(bufnr, group)
     local file_data = group_data.byfile[file]
     if not file_data then return end
 
-    -- The clamp is evidence about the file only when the buffer holds what the file
-    -- does: a `BufNewFile` buffer is empty for want of a file, not of lines.
+    -- The clamp is evidence about the file only when the buffer holds what the
+    -- file holds: a `BufNewFile` buffer is empty for want of a file, not for want
+    -- of lines, and recording that would flatten every stored line to 1.
     local store = _buf_matches_file(bufnr)
 
     for _, mark in pairs(file_data) do
@@ -424,8 +470,9 @@ local function _sync_file_extmarks(bufnr)
                 local mark = file_table[live.id]
                 mark.lnum, mark.col = live.lnum, live.col
 
-                -- The end drifts like the start but lives in `opts`, so syncing only
-                -- the start would re-place it against a creation-time end.
+                -- The end drifts like the start but lives in `opts`, so syncing
+                -- only the start would re-place a current start against a
+                -- creation-time end. Unconditional: a point mark reports nil.
                 mark.opts.end_row = live.end_row
                 mark.opts.end_col = live.end_col
             end
@@ -443,8 +490,9 @@ local function _register_autocmds()
         ("augroup %q already exists -- another copy of this module owns prefix %q"):format(name, _require_prefix()))
 
     local augroup = vim.api.nvim_create_augroup(name, { clear = true })
-    -- `BufNewFile` alongside `BufReadPost`: a path with no file behind it fires only
-    -- the former, and marks on a file that is not there yet are supported.
+    -- `BufNewFile` alongside `BufReadPost`: a path with no file behind it fires
+    -- only the former, and marks on a file that is not there yet are a case this
+    -- module supports -- see `_normalize_file`.
     vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile" }, {
         group = augroup,
         callback = function(ev)
@@ -454,12 +502,14 @@ local function _register_autocmds()
         end,
     })
     -- A rename leaves the buffer holding the old name's marks, rendered but
-    -- unreachable. Re-applying puts back whatever the new name owns.
+    -- unreachable: every lookup goes through the file, not the buffer. Re-applying
+    -- clears the namespace and puts back whatever the new name owns.
     vim.api.nvim_create_autocmd("BufFilePost", {
         group = augroup,
         callback = function(ev)
             -- Dropped rather than repointed: `_apply_buffer_extmarks` re-attaches
-            -- under the new file, and a stale entry has `_on_lines` repairing it wrong.
+            -- under the new file if it has marks, and leaving the old entry has
+            -- `_on_lines` repairing this buffer against a file it no longer holds.
             _attached[ev.buf] = nil
             for group in pairs(_defined_groups) do
                 _apply_buffer_extmarks(ev.buf, group)
@@ -470,26 +520,27 @@ local function _register_autocmds()
         group = augroup,
         callback = function(ev) _sync_file_extmarks(ev.buf) end,
     })
-    -- `BufUnload` as well as `BufWipeout`: `:bdelete` unloads without wiping, so
-    -- waiting for the wipe leaks an entry per buffer for the life of the session.
+    -- `BufUnload` as well as `BufWipeout`: `:bdelete` unloads without wiping and
+    -- leaves the buffer valid, so waiting for the wipe leaks an entry per buffer
+    -- for the life of the session -- and `_lookup_loaded_bufnr` caches every
+    -- loaded buffer it walks past, tracked or not. An entry for an unloaded
+    -- buffer is dead weight anyway: only loaded buffers are ever scanned, and a
+    -- buffer that comes back pays one `resolve()` to re-enter the cache.
     vim.api.nvim_create_autocmd({ "BufUnload", "BufWipeout" }, {
         group = augroup,
         callback = function(ev) _bufname_cache[ev.buf] = nil end,
     })
 end
 
----@param id number
----@param file string
----@param lnum number        -- 1-based
----@param col number        -- 0-based
+---@param spec annotate.util.fileextmarks.SetOpts
 ---@param group_data annotate.util.fileextmarks.GroupData
----@param opts vim.api.keyset.set_extmark       -- extmark opts (include `priority` here)
----@param user_data any
+---@return number id      -- the id the mark is stored under
 ---@see vim.api.nvim_buf_set_extmark
-local function _set_file_extmark(id, file, lnum, col, group_data, opts, user_data)
+local function _set_file_extmark(spec, group_data)
+    local id, lnum, col = spec.id, spec.lnum, spec.col
     assert(lnum >= 1, "lnum must be 1-based")
 
-    file = _normalize_file(file)
+    local file = _normalize_file(spec.file)
     local bufnr = _get_loaded_bufnr(file)
 
     local old_file = group_data.id_to_file[id]
@@ -499,8 +550,9 @@ local function _set_file_extmark(id, file, lnum, col, group_data, opts, user_dat
             vim.api.nvim_buf_del_extmark(old_bufnr, group_data.ns, id)
         end
 
-        -- Vacate the old file, or the mark stays visible there: `_get_extmarks` and
-        -- `refresh()` both read from `byfile` rather than from the buffer.
+        -- Vacate the old file, or the mark stays visible there: it would be
+        -- reported twice by `_get_extmarks` and put back into the old buffer by
+        -- `refresh()`, since both read from `byfile` rather than from the buffer.
         local old_table = group_data.byfile[old_file]
         if old_table then
             old_table[id] = nil
@@ -519,18 +571,24 @@ local function _set_file_extmark(id, file, lnum, col, group_data, opts, user_dat
         col = col,
         -- `id` last: with "force" the right-hand table wins, and the id this
         -- mark is keyed by everywhere is not the caller's to override.
-        opts = vim.tbl_extend("force", opts or {}, { id = id }),
-        user_data = user_data,
+        opts = vim.tbl_extend("force", spec.opts or {}, { id = id }),
+        user_data = spec.user_data,
     }
 
     group_data.byfile[file][id] = mark
 
     if bufnr >= 0 then
-        -- Gated like every other write into the cached position: a buffer with unsaved
-        -- deletes is shorter than its file, and storing that would pin the mark.
+        -- Gated like every other write into the cached position: the clamp inside
+        -- `_set_extmark` is measured against the *buffer*, and a buffer with
+        -- unsaved deletes is shorter than its file. Storing that would pin the
+        -- mark to the short buffer's last line for good -- the edit can be thrown
+        -- away, the cached line cannot. Where the buffer is the file, the clamp is
+        -- evidence and worth keeping; where it is not, the caller's line stands.
         _set_extmark(bufnr, mark, _buf_matches_file(bufnr))
         _attach_buffer(bufnr, file)
     end
+
+    return id
 end
 
 ---@param id number
@@ -618,11 +676,11 @@ end
 ---@param file string
 ---@param line number
 ---@param group_data annotate.util.fileextmarks.GroupData
----@param live boolean
+---@param live boolean?      -- prefer the open buffer's position (default: stored)
 ---@return annotate.util.fileextmarks.MarkInfo?
 local function _get_extmark_by_location(file, line, group_data, live)
-    assert(type(live) == "boolean")
     assert(line >= 1, "line must be 1-based")
+    live = live == true
 
     file = _normalize_file(file)
 
@@ -635,7 +693,8 @@ local function _get_extmark_by_location(file, line, group_data, live)
         if line > line_count then return nil end
 
         -- Bounded to the line asked for rather than walking the namespace. The last
-        -- line reaches past the end too, where a stranded mark reads as sitting on it.
+        -- line reaches past the end too: a mark stranded there reads as sitting on
+        -- it, and a buffer we failed to attach to can still be holding one.
         local last = line == line_count and { -1, -1 } or { line - 1, -1 }
         local found = vim.api.nvim_buf_get_extmarks(
             bufnr,
@@ -681,10 +740,10 @@ local function _get_extmark_by_location(file, line, group_data, live)
 end
 
 ---@param group_data annotate.util.fileextmarks.GroupData
----@param live boolean
+---@param live boolean?      -- prefer the open buffer's position (default: stored)
 ---@return annotate.util.fileextmarks.MarkInfo[]
 local function _get_extmarks(group_data, live)
-    assert(type(live) == "boolean")
+    live = live == true
 
     local result = {}
 
@@ -723,10 +782,10 @@ end
 
 ---@param file string
 ---@param group_data annotate.util.fileextmarks.GroupData
----@param live boolean
+---@param live boolean?      -- prefer the open buffer's position (default: stored)
 ---@return annotate.util.fileextmarks.MarkInfo[]
 local function _get_file_extmarks(file, group_data, live)
-    assert(type(live) == "boolean")
+    live = live == true
 
     file = _normalize_file(file)
     local result = {}
@@ -766,30 +825,32 @@ local function _get_file_extmarks(file, group_data, live)
 end
 
 ---@param group_data annotate.util.fileextmarks.GroupData
----@param group string
-local function _refresh_group(group_data, group)
+---@param namespace string      -- key into `_defined_groups`
+local function _refresh_group(group_data, namespace)
     for file in pairs(group_data.byfile) do
         local bufnr = _get_loaded_bufnr(file)
         if bufnr >= 0 then
-            _apply_buffer_extmarks(bufnr, group) -- clears the namespace itself
+            _apply_buffer_extmarks(bufnr, namespace) -- clears the namespace itself
         end
     end
 end
 
+--- The surface one group is driven through. `lnum` is 1-based and `col`
+--- 0-based; `live` prefers the position in an open buffer over the stored one.
 ---@class annotate.util.fileextmarks.GroupFunctions
----@field set_file_extmark fun(id:number, file:string, lnum:number, col:number, opts:vim.api.keyset.set_extmark, user_data:any)
----@field remove_extmarks fun()
----@field remove_extmark fun(id:number)
----@field remove_file_extmarks fun(file:string)
+---@field set_file_extmark fun(spec:annotate.util.fileextmarks.SetOpts): number  sets or repositions the mark, returns its id
+---@field remove_extmarks fun()  removes every mark in the group
+---@field remove_extmark fun(id:number)  removes one mark
+---@field remove_file_extmarks fun(file:string)  removes the group's marks on one file
 ---@field get_extmark_by_id fun(id:number): annotate.util.fileextmarks.MarkInfo?
----@field get_extmark_by_location fun(file:string, line:number, live:boolean): annotate.util.fileextmarks.MarkInfo?
----@field get_extmarks fun(live:boolean): annotate.util.fileextmarks.MarkInfo[]
----@field get_file_extmarks fun(file:string, live:boolean): annotate.util.fileextmarks.MarkInfo[]
----@field sync fun(bufnr:integer)   -- fold live positions into the durable ones
----@field refresh fun()
+---@field get_extmark_by_location fun(file:string, line:number, live:boolean?): annotate.util.fileextmarks.MarkInfo?
+---@field get_extmarks fun(live:boolean?): annotate.util.fileextmarks.MarkInfo[]  every mark in the group
+---@field get_file_extmarks fun(file:string, live:boolean?): annotate.util.fileextmarks.MarkInfo[]
+---@field sync fun(bufnr:integer)  folds live positions into the durable ones
+---@field refresh fun()  re-applies the group's marks to every open buffer
 
---- Claims the prefix used for every namespace and augroup this module creates.
---- Must be called (once) before M.define_group().
+--- Claims the prefix every namespace and augroup this module creates is named
+--- after. Must be called once, before `define_group`.
 ---@param prefix string  unique to the calling plugin, e.g. "myplugin"
 function M.init(prefix)
     assert(type(prefix) == "string" and prefix ~= "", "prefix (non-empty string) required")
@@ -798,7 +859,9 @@ function M.init(prefix)
     _prefix = prefix
 end
 
----@param group string  name, unique within this module instance; used to derive the extmark namespace
+--- Define a group and return its functions. `group` names it within this module
+--- instance; the extmark namespace derives from the prefix claimed by `M.init`.
+---@param group string  e.g. "notes"
 ---@return annotate.util.fileextmarks.GroupFunctions
 function M.define_group(group)
     _require_prefix()
@@ -827,8 +890,8 @@ function M.define_group(group)
 
     ---@type annotate.util.fileextmarks.GroupFunctions
     return {
-        set_file_extmark = function(id, file, lnum, col, opts, user_data)
-            _set_file_extmark(id, file, lnum, col, group_data, opts, user_data)
+        set_file_extmark = function(spec)
+            return _set_file_extmark(spec, group_data)
         end,
         remove_extmark = function(id)
             _remove_extmark(id, group_data)

@@ -71,7 +71,14 @@ local function _draw(notes)
     local group = assert(_group)
     for _, note in ipairs(notes) do
         _last_id = _last_id + 1
-        group.set_file_extmark(_last_id, note.file, note.lnum, 0, _extmark_opts(note.text), { text = note.text })
+        group.set_file_extmark({
+            id = _last_id,
+            file = note.file,
+            lnum = note.lnum,
+            col = 0,
+            opts = _extmark_opts(note.text),
+            user_data = { text = note.text },
+        })
     end
 end
 
@@ -169,7 +176,14 @@ function M.set(file, lnum, text)
         id = _last_id
     end
 
-    _group.set_file_extmark(id, file, lnum, 0, _extmark_opts(text), { text = text })
+    _group.set_file_extmark({
+        id = id,
+        file = file,
+        lnum = lnum,
+        col = 0,
+        opts = _extmark_opts(text),
+        user_data = { text = text },
+    })
     M.save()
 end
 
