@@ -36,11 +36,15 @@ vim.pack.add({ "https://github.com/mbfoss/annotate.nvim" })
 [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
-{ "mbfoss/annotate.nvim" }
+{ "mbfoss/annotate.nvim", lazy = false }
 ```
 
 No setup call is required: `:Annotate` is registered when the plugin loads, and
 the plugin's modules load on first use or when a file with notes is opened.
+
+`lazy = false` is needed all the same: notes are read as a file is opened, so
+loading the plugin the first time `:Annotate` is run would leave files opened
+before that without theirs.
 
 ## Notes <!-- tag: notes -->
 
