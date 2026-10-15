@@ -48,9 +48,10 @@ function M.open(opts, on_confirm)
         win, win_augroup = nil, nil
     end)
 
-    vim.wo[win].wrap = true
-    vim.wo[win].winfixbuf = true
-    vim.wo[win].winhighlight = "NormalFloat:NormalFloat,FloatBorder:FloatBorder,FloatTitle:FloatTitle"
+    local lwo = vim.wo[win][0]
+    lwo.wrap = true
+    lwo.winfixbuf = true
+    lwo.winhighlight = "NormalFloat:NormalFloat,FloatBorder:FloatBorder,FloatTitle:FloatTitle"
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { initial_text })
 
     local initial_col = #initial_text
@@ -75,7 +76,7 @@ function M.open(opts, on_confirm)
                     vim.api.nvim_win_set_config(win, { width = current_width })
                 end
             end
-            if vim.api.nvim_win_is_valid(win) and vim.wo[win].wrap then
+            if vim.api.nvim_win_is_valid(win) and vim.wo[win][0].wrap then
                 local display_width = math.max(1, current_width - 2) -- borders
                 local needed_rows = math.ceil(vim.fn.strdisplaywidth(line) / display_width)
                 local new_height = math.min(math.max(needed_rows, min_height), max_height)
